@@ -33,6 +33,18 @@ try:
 except Exception:
     HAS_XGB = False
 
+
+def _calibrar(modelo, X_val, y_val):
+    """Calibra un modelo ya entrenado. Usa FrozenEstimator (sklearn >=1.6)
+    y cae a cv='prefit' en versiones antiguas."""
+    try:
+        from sklearn.frozen import FrozenEstimator
+        cal = CalibratedClassifierCV(FrozenEstimator(modelo), method="isotonic")
+    except Exception:
+        cal = CalibratedClassifierCV(modelo, method="isotonic", cv="prefit")
+    cal.fit(X_val, y_val)
+    return cal
+
 CSV_DEFAULT = "results_actualizado_mundial_2026.csv"
 ANIO_INICIO = 2018
 RANDOM_STATE = 42
@@ -374,8 +386,7 @@ def run_pipeline(path=CSV_DEFAULT):
             early_stopping_rounds=50, random_state=RANDOM_STATE)
         m_xgb.fit(Xtr.iloc[:vcut], yr_tr.iloc[:vcut],
                   eval_set=[(Xtr.iloc[vcut:], yr_tr.iloc[vcut:])], verbose=False)
-        m_xgb_cal = CalibratedClassifierCV(m_xgb, method="isotonic", cv="prefit")
-        m_xgb_cal.fit(Xtr.iloc[vcut:], yr_tr.iloc[vcut:])
+        m_xgb_cal = _calibrar(m_xgb, Xtr.iloc[vcut:], yr_tr.iloc[vcut:])
         evals.append(_evaluar("XGBoost", y_true, m_xgb.predict_proba(Xte)))
         evals.append(_evaluar("XGBoost calibrado", y_true, m_xgb_cal.predict_proba(Xte)))
 
