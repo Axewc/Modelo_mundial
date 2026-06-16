@@ -35,15 +35,19 @@ except Exception:
 
 
 def _calibrar(modelo, X_val, y_val):
-    """Calibra un modelo ya entrenado. Usa FrozenEstimator (sklearn >=1.6)
-    y cae a cv='prefit' en versiones antiguas."""
+    """Calibra un modelo ya entrenado de forma compatible entre versiones.
+    Intenta FrozenEstimator (sklearn >=1.6, recomendado) y, si falla por
+    cualquier motivo (import o validacion), cae a cv='prefit' (sklearn <1.6).
+    El .fit va DENTRO del try para capturar tambien errores de validacion."""
     try:
         from sklearn.frozen import FrozenEstimator
         cal = CalibratedClassifierCV(FrozenEstimator(modelo), method="isotonic")
+        cal.fit(X_val, y_val)
+        return cal
     except Exception:
         cal = CalibratedClassifierCV(modelo, method="isotonic", cv="prefit")
-    cal.fit(X_val, y_val)
-    return cal
+        cal.fit(X_val, y_val)
+        return cal
 
 CSV_DEFAULT = "results_actualizado_mundial_2026.csv"
 ANIO_INICIO = 2018
