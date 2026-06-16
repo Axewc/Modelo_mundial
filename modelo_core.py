@@ -281,7 +281,8 @@ def fit_dc(d, alpha=0.05):
         hb = 0 if neutral else 1
         lh = np.exp(c + atk_d.get(home, 0.0) + dfn_d.get(away, 0.0) + gamma * hb)
         la = np.exp(c + atk_d.get(away, 0.0) + dfn_d.get(home, 0.0))
-        return lh, la
+        # cota de seguridad: ninguna seleccion espera <0.05 ni >6 goles
+        return float(np.clip(lh, 0.05, 6.0)), float(np.clip(la, 0.05, 6.0))
 
     atk_h = d["home_team"].map(atk_d).values; dfn_h = d["home_team"].map(dfn_d).values
     atk_a = d["away_team"].map(atk_d).values; dfn_a = d["away_team"].map(dfn_d).values
@@ -331,6 +332,47 @@ def poisson_result_probs(lh, la, max_goals=10):
     return np.array([p_away / s, p_draw / s, p_home / s])
 
 
+# --- Seleccion de la regularizacion (alpha) del modelo de goles DC ---
+def _dc_lambdas_df(pred, d):
+    atk, dfn = pred["atk"], pred["dfn"]
+    c, g = pred["c"], pred["gamma"]
+    ah = d["home_team"].map(atk).fillna(0.0).values
+    dh = d["home_team"].map(dfn).fillna(0.0).values
+    aa = d["away_team"].map(atk).fillna(0.0).values
+    da = d["away_team"].map(dfn).fillna(0.0).values
+    hb = (1 - d["neutral_match"].values)
+    lh = np.clip(np.exp(c + ah + da + g * hb), 0.05, 6.0)
+    la = np.clip(np.exp(c + aa + dh), 0.05, 6.0)
+    return lh, la
+
+
+def _poisson_deviance(y, lam):
+    y = np.asarray(y, float)
+    term = np.where(y > 0, y * np.log(y / lam), 0.0)
+    return 2.0 * np.sum(term - (y - lam))
+
+
+def _dc_deviance(pred, d):
+    lh, la = _dc_lambdas_df(pred, d)
+    return (_poisson_deviance(d["home_score"].values, lh)
+            + _poisson_deviance(d["away_score"].values, la))
+
+
+def select_alpha_dc(d_tr, d_val, alphas=(0.01, 0.05, 0.15, 0.5)):
+    """Elige la regularizacion del modelo de goles minimizando la deviance
+    de Poisson sobre un periodo de validacion (en vez de fijarla a ojo)."""
+    best_a, best_dev = 0.05, np.inf
+    for a in alphas:
+        try:
+            pred = fit_dc(d_tr, alpha=a)
+            dev = _dc_deviance(pred, d_val)
+        except Exception:
+            continue
+        if np.isfinite(dev) and dev < best_dev:
+            best_dev, best_a = dev, a
+    return best_a
+
+
 # ============================================================
 # 5) PIPELINE COMPLETO
 # ============================================================
@@ -342,12 +384,26 @@ def _brier(y, proba):
     return np.mean(np.sum((proba - Y) ** 2, axis=1))
 
 
+def _rps(y, proba):
+    """Ranked Probability Score: metrica estandar para pronosticos 1X2
+    (penaliza segun la distancia ORDINAL entre la prob acumulada predicha
+    y la real). Orden: [gana visitante, empate, gana local]. Menor = mejor."""
+    y = np.asarray(y)
+    Y = np.zeros((len(y), 3))
+    for i, c in enumerate(CLASSES):
+        Y[:, i] = (y == c)
+    cdf_p = np.cumsum(proba, axis=1)
+    cdf_y = np.cumsum(Y, axis=1)
+    return float(np.mean(np.sum((cdf_p - cdf_y) ** 2, axis=1) / (3 - 1)))
+
+
 def _evaluar(nombre, y, proba):
     proba = np.clip(np.asarray(proba, float), 1e-15, 1)
     proba = proba / proba.sum(axis=1, keepdims=True)
     pred = np.array(CLASSES)[np.argmax(proba, axis=1)]
     return {"Modelo": nombre, "LogLoss": log_loss(y, proba, labels=CLASSES),
-            "Brier": _brier(y, proba), "Accuracy": accuracy_score(y, pred)}
+            "Brier": _brier(y, proba), "RPS": _rps(y, proba),
+            "Accuracy": accuracy_score(y, pred)}
 
 
 def run_pipeline(path=CSV_DEFAULT):
@@ -394,13 +450,18 @@ def run_pipeline(path=CSV_DEFAULT):
         evals.append(_evaluar("XGBoost", y_true, m_xgb.predict_proba(Xte)))
         evals.append(_evaluar("XGBoost calibrado", y_true, m_xgb_cal.predict_proba(Xte)))
 
-    # dixon-coles eval + full
-    dc_eval = fit_dc(df.iloc[:split])
+    # dixon-coles: elegir regularizacion (alpha) por validacion temporal
+    try:
+        a_cut = int(split * 0.85)
+        alpha_dc = select_alpha_dc(df.iloc[:a_cut], df.iloc[a_cut:split])
+    except Exception:
+        alpha_dc = 0.05
+    dc_eval = fit_dc(df.iloc[:split], alpha=alpha_dc)
     pdc = np.array([dc_result_probs(dc_eval, h, a, bool(n)) for h, a, n in
                     zip(df.iloc[split:]["home_team"], df.iloc[split:]["away_team"],
                         df.iloc[split:]["neutral_match"])])
     evals.append(_evaluar("Dixon-Coles", y_true, pdc))
-    dc_full = fit_dc(df)
+    dc_full = fit_dc(df, alpha=alpha_dc)
 
     tabla_eval = (pd.DataFrame(evals).sort_values("LogLoss")
                   .reset_index(drop=True).round(4))
@@ -424,6 +485,7 @@ def run_pipeline(path=CSV_DEFAULT):
         "m_xgb": m_xgb, "m_xgb_cal": m_xgb_cal, "dc_full": dc_full,
         "h2h": h2h, "equipos_actuales": equipos_actuales,
         "tabla_eval": tabla_eval, "has_xgb": HAS_XGB,
+        "alpha_dc": alpha_dc, "dc_rho": dc_full["rho"], "dc_gamma": dc_full["gamma"],
         "mae_home": float(np.mean(np.abs(pred_home - test["home_score"].values))),
         "mae_away": float(np.mean(np.abs(pred_away - test["away_score"].values))),
     }
@@ -481,7 +543,10 @@ def predict_match(art, local, visitante, neutral_match, peso_torneo):
     lh, la = art["dc_full"]["lambdas"](local, visitante, bool(neutral_match))
     res["goles"]["Dixon-Coles"] = (round(float(lh), 3), round(float(la), 3))
 
-    res["metodos"]["ENSEMBLE"] = np.mean(list(res["metodos"].values()), axis=0)
+    # Ensemble SOLO con los metodos solidos (excluye el XGB sin calibrar)
+    keys = [k for k in ["Dixon-Coles", "XGBoost (calibrado)", "Poisson + MC"]
+            if k in res["metodos"]]
+    res["metodos"]["ENSEMBLE"] = np.mean([res["metodos"][k] for k in keys], axis=0)
 
     # marcadores mas probables (Dixon-Coles)
     M = dc_score_matrix(art["dc_full"], local, visitante, bool(neutral_match), 6)
