@@ -9639,7 +9639,6 @@ date,home_team,away_team,home_score,away_score,tournament,city,country,neutral
 1974-02-15,Ghana,Guinea,5.0,2.0,Friendly,Accra,Ghana,False
 1974-02-17,Congo,Mali,2.0,2.0,Friendly,Brazzaville,Congo,False
 1974-02-17,Ghana,Guinea,3.0,1.0,Friendly,Accra,Ghana,False
-1974-02-17,Tahiti,New Caledonia,2.0,1.0,Friendly,Papeete,Tahiti,False
 1974-02-17,Tahiti,New Caledonia,1.0,2.0,Friendly,Papeete,Tahiti,False
 1974-02-20,Hong Kong,Japan,0.0,0.0,Friendly,So Kon Po,Hong Kong,False
 1974-02-20,Tahiti,New Caledonia,2.0,2.0,Friendly,Papeete,Tahiti,False
@@ -49296,10 +49295,6 @@ date,home_team,away_team,home_score,away_score,tournament,city,country,neutral
 2026-06-15,Iran,New Zealand,2.0,2.0,FIFA World Cup,Inglewood,United States,True
 2026-06-15,Spain,Cape Verde,0.0,0.0,FIFA World Cup,Atlanta,United States,True
 2026-06-15,Saudi Arabia,Uruguay,1.0,1.0,FIFA World Cup,Miami Gardens,United States,True
-2026-06-16,France,Senegal,,,FIFA World Cup,East Rutherford,United States,True
-2026-06-16,Iraq,Norway,,,FIFA World Cup,Foxborough,United States,True
-2026-06-16,Argentina,Algeria,,,FIFA World Cup,Kansas City,United States,True
-2026-06-16,Austria,Jordan,,,FIFA World Cup,Santa Clara,United States,True
 2026-06-17,Portugal,DR Congo,,,FIFA World Cup,Houston,United States,True
 2026-06-17,Uzbekistan,Colombia,,,FIFA World Cup,Mexico City,Mexico,True
 2026-06-17,England,Croatia,,,FIFA World Cup,Arlington,United States,True
@@ -49352,3 +49347,7 @@ date,home_team,away_team,home_score,away_score,tournament,city,country,neutral
 2026-06-27,DR Congo,Uzbekistan,,,FIFA World Cup,Atlanta,United States,True
 2026-06-27,Panama,England,,,FIFA World Cup,East Rutherford,United States,True
 2026-06-27,Croatia,Ghana,,,FIFA World Cup,Philadelphia,United States,True
+2026-06-16,France,Senegal,3.0,1.0,FIFA World Cup,East Rutherford,United States,True
+2026-06-16,Iraq,Norway,1.0,4.0,FIFA World Cup,Foxborough,United States,True
+2026-06-16,Argentina,Algeria,3.0,0.0,FIFA World Cup,Kansas City,United States,True
+2026-06-16,Austria,Jordan,3.0,1.0,FIFA World Cup,Santa Clara,United States,True
