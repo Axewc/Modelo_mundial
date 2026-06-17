@@ -124,13 +124,13 @@ def compute_elo(df_full):
 
         t = row["tournament"]
         if t == "Friendly":
-            pc = 0.45
+            pc = 0.60
         elif "qualification" in str(t).lower():
-            pc = 0.85
+            pc = 0.90
         elif t in COMP_FUERTE:
-            pc = 1.15
+            pc = 1.10
         else:
-            pc = 0.75
+            pc = 0.80
 
         k = 24 * pr * pc * mov
         elo[h] += np.clip(k * (sh - exp_home), -32, 32)
@@ -251,9 +251,9 @@ def _pesos_dc(d):
     fm = d["date"].max()
     pr = np.exp(-(fm - d["date"]).dt.days / TAU_DAYS)
     t = d["tournament"].astype(str)
-    pc = np.where(t.eq("Friendly"), 0.45,
-         np.where(t.str.lower().str.contains("qualification"), 0.85,
-         np.where(t.isin(COMP_FUERTE), 1.15, 0.75)))
+    pc = np.where(t.eq("Friendly"), 0.60,
+         np.where(t.str.lower().str.contains("qualification"), 0.90,
+         np.where(t.isin(COMP_FUERTE), 1.10, 0.80)))
     return pr.values * pc
 
 
@@ -374,6 +374,105 @@ def select_alpha_dc(d_tr, d_val, alphas=(0.01, 0.05, 0.15, 0.5)):
 
 
 # ============================================================
+# 4b) VALIDACION TEMPORAL (walk-forward, ventana expansiva)
+# ============================================================
+def temporal_validation(df, dm, n_folds=5, min_train_frac=0.5, include_xgb=True):
+    """Evaluacion walk-forward: en vez de un unico split 80/20, entrena con
+    una ventana que se va expandiendo en el tiempo y evalua en el bloque
+    siguiente (varios folds). Asi se mide la robustez fuera de muestra de
+    forma realista (siempre se predice el futuro con el pasado) y se detecta
+    overfit. `df` y `dm` deben estar alineados por posicion (mismo orden).
+
+    Devuelve un dict con:
+      - "folds":   metricas por (modelo, fold)
+      - "resumen": media y desviacion de cada metrica por modelo
+    """
+    n = len(dm)
+    start = max(int(n * min_train_frac), 60)
+    bounds = np.linspace(start, n, n_folds + 1).astype(int)
+    fb = ["elo_diff", "home_advantage", "neutral_match"]
+    filas = []
+
+    for i in range(n_folds):
+        cut, end = int(bounds[i]), int(bounds[i + 1])
+        if cut < 60 or end - cut < 15:
+            continue
+        tr_dm, te_dm = dm.iloc[:cut], dm.iloc[cut:end]
+        tr_df, te_df = df.iloc[:cut], df.iloc[cut:end]
+        y_true = te_dm["resultado"].values
+        yr_tr = tr_dm["resultado"]
+        meta = {"fold": i + 1, "n_test": int(len(te_dm))}
+
+        # Baseline ELO (regresion logistica sobre elo_diff)
+        try:
+            blr = LogisticRegression(max_iter=1000).fit(tr_dm[fb], yr_tr)
+            pb = blr.predict_proba(te_dm[fb])[:, np.argsort(blr.classes_)]
+            filas.append({**meta, **_evaluar("Baseline ELO", y_true, pb)})
+        except Exception:
+            pass
+
+        # Poisson (Monte Carlo sobre lambdas predichas)
+        try:
+            sc = StandardScaler().fit(tr_dm[FEATURES])
+            Xtr_s, Xte_s = sc.transform(tr_dm[FEATURES]), sc.transform(te_dm[FEATURES])
+            mh = PoissonRegressor(alpha=0.1, max_iter=500).fit(Xtr_s, tr_dm["home_score"])
+            ma = PoissonRegressor(alpha=0.1, max_iter=500).fit(Xtr_s, tr_dm["away_score"])
+            ph, pa = mh.predict(Xte_s), ma.predict(Xte_s)
+            pp = np.array([poisson_result_probs(lh, la) for lh, la in zip(ph, pa)])
+            filas.append({**meta, **_evaluar("Poisson (MC)", y_true, pp)})
+        except Exception:
+            pass
+
+        # Dixon-Coles (alpha elegido por validacion interna del fold)
+        try:
+            a_cut = int(cut * 0.85)
+            alpha_dc = (select_alpha_dc(tr_df.iloc[:a_cut], tr_df.iloc[a_cut:])
+                        if a_cut > 40 else 0.05)
+            dcp = fit_dc(tr_df, alpha=alpha_dc)
+            pdc = np.array([dc_result_probs(dcp, h, a, bool(nn)) for h, a, nn in
+                            zip(te_df["home_team"], te_df["away_team"],
+                                te_df["neutral_match"])])
+            filas.append({**meta, **_evaluar("Dixon-Coles", y_true, pdc)})
+        except Exception:
+            pass
+
+        # XGBoost (opcional; early stopping sobre la cola del train del fold)
+        if include_xgb and HAS_XGB:
+            try:
+                vcut = int(cut * 0.85)
+                mx = XGBClassifier(
+                    n_estimators=600, max_depth=4, learning_rate=0.03, subsample=0.8,
+                    colsample_bytree=0.8, min_child_weight=3, gamma=0.2,
+                    objective="multi:softprob", num_class=3, eval_metric="mlogloss",
+                    early_stopping_rounds=50, random_state=RANDOM_STATE)
+                mx.fit(tr_dm[FEATURES].iloc[:vcut], yr_tr.iloc[:vcut],
+                       eval_set=[(tr_dm[FEATURES].iloc[vcut:], yr_tr.iloc[vcut:])],
+                       verbose=False)
+                filas.append({**meta, **_evaluar("XGBoost", y_true,
+                                                 mx.predict_proba(te_dm[FEATURES]))})
+            except Exception:
+                pass
+
+    folds = pd.DataFrame(filas)
+    if folds.empty:
+        return {"folds": folds, "resumen": pd.DataFrame()}
+
+    met = ["LogLoss", "Brier", "RPS", "Accuracy"]
+    g = folds.groupby("Modelo")
+    resumen = pd.DataFrame({
+        "Modelo": list(g.groups.keys()),
+        "Folds": g["fold"].count().values,
+        "LogLoss": g["LogLoss"].mean().values,
+        "LogLoss_sd": g["LogLoss"].std(ddof=0).values,
+        "RPS": g["RPS"].mean().values,
+        "RPS_sd": g["RPS"].std(ddof=0).values,
+        "Brier": g["Brier"].mean().values,
+        "Accuracy": g["Accuracy"].mean().values,
+    }).sort_values("RPS").reset_index(drop=True).round(4)
+    return {"folds": folds.round(4), "resumen": resumen}
+
+
+# ============================================================
 # 5) PIPELINE COMPLETO
 # ============================================================
 def _brier(y, proba):
@@ -466,6 +565,12 @@ def run_pipeline(path=CSV_DEFAULT):
     tabla_eval = (pd.DataFrame(evals).sort_values("LogLoss")
                   .reset_index(drop=True).round(4))
 
+    # Validacion temporal walk-forward (robustez fuera de muestra / overfit)
+    try:
+        temporal = temporal_validation(df, dm)
+    except Exception:
+        temporal = {"folds": pd.DataFrame(), "resumen": pd.DataFrame()}
+
     # snapshot de forma actual (para el predictor)
     eq = []
     for t in historial:
@@ -485,6 +590,7 @@ def run_pipeline(path=CSV_DEFAULT):
         "m_xgb": m_xgb, "m_xgb_cal": m_xgb_cal, "dc_full": dc_full,
         "h2h": h2h, "equipos_actuales": equipos_actuales,
         "tabla_eval": tabla_eval, "has_xgb": HAS_XGB,
+        "tabla_temporal": temporal["resumen"], "temporal_folds": temporal["folds"],
         "alpha_dc": alpha_dc, "dc_rho": dc_full["rho"], "dc_gamma": dc_full["gamma"],
         "mae_home": float(np.mean(np.abs(pred_home - test["home_score"].values))),
         "mae_away": float(np.mean(np.abs(pred_away - test["away_score"].values))),
