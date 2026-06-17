@@ -211,3 +211,26 @@ with tab4:
                     "RPS": "{:.4f}", "Accuracy": "{:.3f}"}))
     st.dataframe(sty, use_container_width=True, hide_index=True)
     st.caption("El **mejor** valor de cada columna aparece resaltado en verde.")
+
+    st.divider()
+    st.markdown("##### Validación temporal (walk-forward)")
+    st.caption("Ventana expansiva en el tiempo: se entrena con el pasado y se "
+               "evalúa en el bloque siguiente, repetido en varios *folds*. "
+               "**LogLoss/RPS/Brier:** menor es mejor · **Accuracy:** mayor es mejor. "
+               "Una desviación (`_sd`) baja entre folds indica un modelo estable "
+               "en el tiempo y poco sobreajustado.")
+    tt = art.get("tabla_temporal")
+    if tt is not None and not tt.empty:
+        styt = (tt.style
+                .highlight_min(subset=["LogLoss", "RPS", "Brier"], color="#1b5e20")
+                .highlight_max(subset=["Accuracy"], color="#1b5e20")
+                .format({"LogLoss": "{:.4f}", "LogLoss_sd": "{:.4f}",
+                         "RPS": "{:.4f}", "RPS_sd": "{:.4f}",
+                         "Brier": "{:.4f}", "Accuracy": "{:.3f}"}))
+        st.dataframe(styt, use_container_width=True, hide_index=True)
+        folds = art.get("temporal_folds")
+        if folds is not None and not folds.empty:
+            with st.expander("Ver métricas por fold"):
+                st.dataframe(folds, use_container_width=True, hide_index=True)
+    else:
+        st.info("No hay suficientes datos para la validación temporal.")
