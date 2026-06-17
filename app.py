@@ -430,7 +430,13 @@ with tab6:
     tabla = (pd.concat(partes, ignore_index=True).reindex(columns=ing.COLS)
              if partes else pd.DataFrame(columns=ing.COLS))
     if len(tabla):
-        tabla = tabla.drop_duplicates(subset=["date", "home_team", "away_team"])
+        # dedup por partido prefiriendo la fila que YA trae marcador (p.ej. la
+        # de ESPN sobre el fixture vacío del CSV); índice limpio para mostrar.
+        tabla["_con_marcador"] = tabla[["home_score", "away_score"]].notna().any(axis=1)
+        tabla = (tabla.sort_values("_con_marcador")
+                 .drop_duplicates(subset=["date", "home_team", "away_team"], keep="last")
+                 .drop(columns="_con_marcador")
+                 .sort_values(["date", "home_team"]).reset_index(drop=True))
         tabla["date"] = tabla["date"].fillna(fsel)
     # Tipos consistentes para el editor (evita choques de column_config):
     # marcadores numéricos y 'neutral' booleano (aunque la tabla esté vacía).

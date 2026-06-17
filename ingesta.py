@@ -28,6 +28,12 @@ NOMBRES_EXT = {
     "Cabo Verde": "Cape Verde", "Türkiye": "Turkey", "Turkiye": "Turkey",
     "China": "China PR", "Chinese Taipei": "Taiwan",
     "St. Vincent / Grenadines": "Saint Vincent and the Grenadines",
+    # Alias de ESPN que no casaban con el CSV
+    "Congo DR": "DR Congo", "DR Congo": "DR Congo",
+    "Congo": "Congo", "Türkiÿe": "Turkey",
+    "Republic of Ireland": "Republic of Ireland", "Ireland": "Republic of Ireland",
+    "United States of America": "United States",
+    "South Korea": "South Korea", "North Korea": "North Korea",
 }
 
 
