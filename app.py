@@ -9,6 +9,7 @@ import streamlit as st
 import modelo_core as mc
 import analisis_forma as af
 import ingesta as ing
+import odds as odds_mod
 
 st.set_page_config(page_title="Mundial 2026 — Modelo", layout="wide",
                    page_icon="⚽", initial_sidebar_state="expanded")
@@ -76,6 +77,14 @@ def _gh_secrets():
     """Lee la config [github] de los Secrets de Streamlit (vacío si no hay)."""
     try:
         return dict(st.secrets.get("github", {}))
+    except Exception:
+        return {}
+
+
+def _odds_secrets():
+    """Lee la config [odds] de los Secrets de Streamlit (vacío si no hay)."""
+    try:
+        return dict(st.secrets.get("odds", {}))
     except Exception:
         return {}
 
@@ -252,6 +261,65 @@ with tab2:
                              af.marcador_top_por_resultado(Mdc), local, visitante)
         except Exception:
             pass
+
+        # ---- Mercado (casas de apuestas): comparativo + blend ----
+        st.divider()
+        st.markdown("##### 🎰 Mercado (casas de apuestas)")
+        od = _odds_secrets()
+        if od.get("api_key") and st.button("🌐 Traer cuotas (The Odds API)"):
+            try:
+                st.session_state["cuotas_df"] = odds_mod.traer_cuotas(
+                    od["api_key"], od.get("sport", odds_mod.SPORT_DEFAULT))
+                st.success(f"{len(st.session_state['cuotas_df'])} partidos con cuotas.")
+            except Exception as e:
+                st.warning(f"No se pudieron traer cuotas ({type(e).__name__}): {e}")
+
+        fila = odds_mod.buscar_partido(st.session_state.get("cuotas_df"), local, visitante)
+        with st.expander("Ingresar cuotas a mano (1 / X / 2)",
+                         expanded=fila is None):
+            oc = st.columns(3)
+            ch = oc[0].number_input(f"Cuota {local}", 1.01, 1000.0, 2.00, 0.05, key="oc_h")
+            cd = oc[1].number_input("Cuota empate", 1.01, 1000.0, 3.20, 0.05, key="oc_d")
+            ca = oc[2].number_input(f"Cuota {visitante}", 1.01, 1000.0, 3.50, 0.05, key="oc_a")
+            usar_manual = st.checkbox("Usar estas cuotas", value=fila is None)
+
+        market = None
+        if fila is not None and not usar_manual:
+            # reorientar a [away=visitante, draw, home=local] segun el orden de la fila
+            if fila["home_team"] == odds_mod.normaliza_equipo(local):
+                market = np.array([fila["p_away"], fila["p_draw"], fila["p_home"]])
+            else:
+                market = np.array([fila["p_home"], fila["p_draw"], fila["p_away"]])
+            st.caption(f"Cuotas de **{int(fila['n_casas'])} casas** · margen "
+                       f"{fila['margen']}% · {fila['home_team']} {fila['cuota_home']} / "
+                       f"X {fila['cuota_draw']} / {fila['away_team']} {fila['cuota_away']}")
+        elif usar_manual:
+            try:
+                market = odds_mod.implied_probs(ch, cd, ca)  # [away,draw,home], home=local
+            except ValueError as e:
+                st.warning(str(e))
+
+        if market is not None:
+            w = st.slider("Peso del mercado en el blend", 0.0, 1.0, 0.5, 0.05,
+                          help="0 = solo modelo · 1 = solo mercado (pool logarítmico).")
+            mezcla = odds_mod.blend(ens, market, w)
+            comp = pd.DataFrame({
+                "Fuente": ["Modelo", "Mercado", f"Blend (w={w:.2f})"],
+                f"Gana {local}": [ens[2], market[2], mezcla[2]],
+                "Empate": [ens[1], market[1], mezcla[1]],
+                f"Gana {visitante}": [ens[0], market[0], mezcla[0]],
+            })
+            for c in comp.columns[1:]:
+                comp[c] = (comp[c] * 100).round(1)
+            st.dataframe(comp, width="stretch", hide_index=True)
+            # "valor": el modelo da MÁS probabilidad que el mercado
+            val = []
+            for et, lbl in [(2, f"Gana {local}"), (1, "Empate"), (0, f"Gana {visitante}")]:
+                d = (ens[et] - market[et]) * 100
+                if d > 2:
+                    val.append(f"**{lbl}** (+{d:.1f} pts vs mercado)")
+            st.caption("💡 Valor del modelo (donde ve más probabilidad que el mercado): "
+                       + (", ".join(val) if val else "ninguno destacado."))
 
 # ==========================================================
 # TAB 5: ANÁLISIS DE FORMA
