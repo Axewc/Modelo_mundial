@@ -545,6 +545,9 @@ with tab4:
     st.markdown("##### Comparativa de métodos en TEST")
     st.caption("**LogLoss, Brier, RPS:** menor es mejor · **Accuracy:** mayor es mejor. "
                "RPS es la métrica estándar para pronósticos 1X2.")
+    st.caption(f"_Neg-Binomial_ = variante de Dixon-Coles con cola más gruesa "
+               f"(sobredispersión, r={art.get('r_nb', '—')}). Se incluye como "
+               "comparación; si no mejora a Dixon-Coles, no se adopta.")
     te = art["tabla_eval"]
     sty = (te.style
            .highlight_min(subset=["LogLoss", "Brier", "RPS"], color="#1b5e20")
