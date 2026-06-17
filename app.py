@@ -38,6 +38,12 @@ def cargar_ranking_fifa(data_sig):
     return af.cargar_ranking_fifa()
 
 
+@st.cache_data(show_spinner="Validación temporal (walk-forward)…")
+def validacion_temporal(_art, data_sig):
+    # cómputo pesado bajo demanda; cacheado por firma de datos
+    return mc.temporal_validation(_art["df"], _art["dm"])
+
+
 # ---- helpers de formato ----
 def pct_col(label, help=None):
     return st.column_config.ProgressColumn(label, format="%.1f%%",
@@ -103,7 +109,7 @@ with tab1:
     n_sim = c[0].select_slider("Simulaciones", [2000, 5000, 10000, 20000], value=10000,
                                help="Más simulaciones = más precisión, más tiempo.")
     seed = c[1].number_input("Semilla", value=42, step=1)
-    run = c[2].button("▶ Simular", type="primary", use_container_width=True)
+    run = c[2].button("▶ Simular", type="primary", width="stretch")
 
     if run:
         st.session_state["prob"], st.session_state["groups"] = simular(
@@ -124,7 +130,7 @@ with tab1:
 
         st.markdown("##### Tabla completa por ronda")
         st.dataframe(
-            prob, use_container_width=True, height=460, hide_index=True,
+            prob, width="stretch", height=460, hide_index=True,
             column_config={
                 "ELO": st.column_config.NumberColumn(format="%d"),
                 "P_Clasifica": pct_col("Clasifica", "Pasa de fase de grupos"),
@@ -180,7 +186,7 @@ with tab2:
         st.markdown("##### Comparativa por método")
         st.dataframe(
             tabla_metodos(r["metodos"], local, visitante),
-            use_container_width=True, hide_index=True,
+            width="stretch", hide_index=True,
             column_config={
                 f"Gana {local}": pct_col(f"Gana {local}"),
                 "Empate": pct_col("Empate"),
@@ -188,7 +194,7 @@ with tab2:
             })
 
         with st.expander("Marcadores más probables (Dixon-Coles)"):
-            st.dataframe(r["marcadores"], use_container_width=True, hide_index=True,
+            st.dataframe(r["marcadores"], width="stretch", hide_index=True,
                          column_config={"Prob %": pct_col("Probabilidad")})
 
 # ==========================================================
@@ -240,7 +246,7 @@ with tab5:
         c1, c2 = st.columns([1, 1.3])
         with c1:
             st.markdown("**Marcadores más probables**")
-            st.dataframe(r["marcadores"], use_container_width=True, hide_index=True,
+            st.dataframe(r["marcadores"], width="stretch", hide_index=True,
                          column_config={"Prob %": pct_col("Probabilidad")})
         with c2:
             st.markdown("**Forma reciente (ataque / defensa esperados)**")
@@ -250,15 +256,15 @@ with tab5:
                  "Defensa": round(fl["defensa"], 2), "Partidos": fl["n"]},
                 {"Selección": vis, "Ataque": round(fv["ataque"], 2),
                  "Defensa": round(fv["defensa"], 2), "Partidos": fv["n"]},
-            ]), use_container_width=True, hide_index=True,
-                help="Ataque: goles esperados que marca · Defensa: goles que "
-                     "recibe, ya ajustados por el nivel de los rivales.")
+            ]), width="stretch", hide_index=True)
+            st.caption("Ataque: goles esperados que marca · Defensa: goles que "
+                       "recibe, ya ajustados por el nivel de los rivales.")
 
         with st.expander(f"Ver últimos partidos ponderados — {loc}"):
-            st.dataframe(r["forma_local"]["detalle"], use_container_width=True,
+            st.dataframe(r["forma_local"]["detalle"], width="stretch",
                          hide_index=True)
         with st.expander(f"Ver últimos partidos ponderados — {vis}"):
-            st.dataframe(r["forma_visitante"]["detalle"], use_container_width=True,
+            st.dataframe(r["forma_visitante"]["detalle"], width="stretch",
                          hide_index=True)
 
 
@@ -269,7 +275,7 @@ with tab3:
     st.markdown("##### Ranking ELO (historia completa · ventana 8 años)")
     rk = art["ranking"].copy()
     rk.index = rk.index + 1
-    st.dataframe(rk, use_container_width=True, height=620,
+    st.dataframe(rk, width="stretch", height=620,
                  column_config={"ELO": st.column_config.ProgressColumn(
                      "ELO", format="%.0f",
                      min_value=float(rk["ELO"].min()), max_value=float(rk["ELO"].max()))})
@@ -287,7 +293,7 @@ with tab4:
            .highlight_max(subset=["Accuracy"], color="#1b5e20")
            .format({"LogLoss": "{:.4f}", "Brier": "{:.4f}",
                     "RPS": "{:.4f}", "Accuracy": "{:.3f}"}))
-    st.dataframe(sty, use_container_width=True, hide_index=True)
+    st.dataframe(sty, width="stretch", hide_index=True)
     st.caption("El **mejor** valor de cada columna aparece resaltado en verde.")
 
     st.divider()
@@ -296,19 +302,26 @@ with tab4:
                "evalúa en el bloque siguiente, repetido en varios *folds*. "
                "**LogLoss/RPS/Brier:** menor es mejor · **Accuracy:** mayor es mejor. "
                "Una desviación (`_sd`) baja entre folds indica un modelo estable "
-               "en el tiempo y poco sobreajustado.")
-    tt = art.get("tabla_temporal")
-    if tt is not None and not tt.empty:
+               "en el tiempo y poco sobreajustado. _Cómputo pesado: se calcula "
+               "bajo demanda para no ralentizar el arranque._")
+
+    if st.button("▶ Calcular validación temporal"):
+        st.session_state["temporal"] = validacion_temporal(art, data_sig)
+
+    res = st.session_state.get("temporal")
+    if res is not None and not res["resumen"].empty:
+        tt = res["resumen"]
         styt = (tt.style
                 .highlight_min(subset=["LogLoss", "RPS", "Brier"], color="#1b5e20")
                 .highlight_max(subset=["Accuracy"], color="#1b5e20")
                 .format({"LogLoss": "{:.4f}", "LogLoss_sd": "{:.4f}",
                          "RPS": "{:.4f}", "RPS_sd": "{:.4f}",
                          "Brier": "{:.4f}", "Accuracy": "{:.3f}"}))
-        st.dataframe(styt, use_container_width=True, hide_index=True)
-        folds = art.get("temporal_folds")
+        st.dataframe(styt, width="stretch", hide_index=True)
+        folds = res["folds"]
         if folds is not None and not folds.empty:
             with st.expander("Ver métricas por fold"):
-                st.dataframe(folds, use_container_width=True, hide_index=True)
+                st.dataframe(folds, width="stretch", hide_index=True)
     else:
-        st.info("No hay suficientes datos para la validación temporal.")
+        st.info("Pulsa **▶ Calcular validación temporal** para ejecutar el "
+                "walk-forward (tarda unos segundos).")
