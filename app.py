@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 import modelo_core as mc
+import analisis_forma as af
 
 st.set_page_config(page_title="Mundial 2026 — Modelo", layout="wide",
                    page_icon="⚽", initial_sidebar_state="expanded")
@@ -30,6 +31,11 @@ def simular(_art, n_sim, seed, data_sig):
     # data_sig invalida el cache si cambian los datos; _art no se hashea
     prob, groups = mc.simulate_tournament(_art, n_sim=n_sim, seed=seed)
     return prob, groups
+
+
+@st.cache_data(show_spinner=False)
+def cargar_ranking_fifa(data_sig):
+    return af.cargar_ranking_fifa()
 
 
 # ---- helpers de formato ----
@@ -85,8 +91,9 @@ st.title("Modelo predictivo — Copa del Mundo 2026")
 st.caption("ELO (8 años) · Dixon-Coles (ataque/defensa) · XGBoost calibrado · "
            "simulador con cuadro oficial FIFA.")
 
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["🏆 Simulador del torneo", "🆚 Predecir partido", "📊 Ranking ELO", "🧪 Evaluación"])
+tab1, tab2, tab5, tab3, tab4 = st.tabs(
+    ["🏆 Simulador del torneo", "🆚 Predecir partido", "🔬 Análisis de forma",
+     "📊 Ranking ELO", "🧪 Evaluación"])
 
 # ==========================================================
 # TAB 1: SIMULADOR
@@ -183,6 +190,77 @@ with tab2:
         with st.expander("Marcadores más probables (Dixon-Coles)"):
             st.dataframe(r["marcadores"], use_container_width=True, hide_index=True,
                          column_config={"Prob %": pct_col("Probabilidad")})
+
+# ==========================================================
+# TAB 5: ANÁLISIS DE FORMA
+# ==========================================================
+with tab5:
+    st.markdown("##### Expectativa de goles por forma reciente")
+    st.caption(
+        "Construye el pronóstico desde los **últimos 12 partidos oficiales** "
+        "de cada selección: 1) decaimiento temporal (lo nuevo pesa más), "
+        "2) ponderación por nivel del rival, 3) ancla al ranking, "
+        "4) historial directo (H2H) y 5) corrección de resultados bajos.")
+
+    ranking = cargar_ranking_fifa(data_sig)
+    if ranking is None:
+        st.warning(
+            "No se encontró **fifa_ranking.csv** → se usa el **ELO** como ancla. "
+            "Para usar el ranking FIFA oficial, ejecuta `python scrape_fifa_ranking.py` "
+            "localmente y sube el CSV al repo.")
+
+    dff = art["df"]
+    eqs = sorted(pd.unique(pd.concat([dff["home_team"], dff["away_team"]])).tolist())
+    cc = st.columns(4)
+    il = eqs.index("Mexico") if "Mexico" in eqs else 0
+    loc = cc[0].selectbox("Local", eqs, index=il, key="f_loc")
+    vis = cc[1].selectbox("Visitante", eqs, index=1 if il != 1 else 2, key="f_vis")
+    neu = cc[2].selectbox("Sede neutral", [("No", False), ("Sí", True)],
+                          format_func=lambda x: x[0], key="f_neu")[1]
+    nmatches = cc[3].slider("Partidos a considerar", 6, 20, af.N_PARTIDOS, key="f_n")
+
+    if loc == vis:
+        st.warning("Elige selecciones distintas.")
+    else:
+        r = af.predecir_partido_forma(dff, art["elo"], ranking, loc, vis, neu, n=nmatches)
+        p, g = r["prob"], r["goles_esperados"]
+        st.caption(f"Ancla usada: **{r['base_nivel']}** · "
+                   f"índice de nivel — {loc}: {r['indices']['local']} · "
+                   f"{vis}: {r['indices']['visitante']}")
+
+        m = st.columns(3)
+        m[0].metric(f"Gana {loc}", f"{p['local']*100:.1f}%")
+        m[1].metric("Empate", f"{p['empate']*100:.1f}%")
+        m[2].metric(f"Gana {vis}", f"{p['visitante']*100:.1f}%")
+        st.caption(f"⚽ Goles esperados: **{loc} {g['local']} – {g['visitante']} {vis}**"
+                   + (f" · H2H (últimos {r['h2h']['n']}): dif. {r['h2h']['diff']:+.2f} "
+                      f"a favor de {loc if r['h2h']['diff']>=0 else vis}"
+                      if r["h2h"]["n"] else " · sin historial directo"))
+
+        c1, c2 = st.columns([1, 1.3])
+        with c1:
+            st.markdown("**Marcadores más probables**")
+            st.dataframe(r["marcadores"], use_container_width=True, hide_index=True,
+                         column_config={"Prob %": pct_col("Probabilidad")})
+        with c2:
+            st.markdown("**Forma reciente (ataque / defensa esperados)**")
+            fl, fv = r["forma_local"], r["forma_visitante"]
+            st.dataframe(pd.DataFrame([
+                {"Selección": loc, "Ataque": round(fl["ataque"], 2),
+                 "Defensa": round(fl["defensa"], 2), "Partidos": fl["n"]},
+                {"Selección": vis, "Ataque": round(fv["ataque"], 2),
+                 "Defensa": round(fv["defensa"], 2), "Partidos": fv["n"]},
+            ]), use_container_width=True, hide_index=True,
+                help="Ataque: goles esperados que marca · Defensa: goles que "
+                     "recibe, ya ajustados por el nivel de los rivales.")
+
+        with st.expander(f"Ver últimos partidos ponderados — {loc}"):
+            st.dataframe(r["forma_local"]["detalle"], use_container_width=True,
+                         hide_index=True)
+        with st.expander(f"Ver últimos partidos ponderados — {vis}"):
+            st.dataframe(r["forma_visitante"]["detalle"], use_container_width=True,
+                         hide_index=True)
+
 
 # ==========================================================
 # TAB 3: RANKING ELO

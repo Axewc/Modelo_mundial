@@ -4,8 +4,10 @@ App de Streamlit que ejecuta el pipeline completo (ELO, Poisson, XGBoost,
 Dixon-Coles) y simula el torneo con el **cuadro oficial FIFA 2026**.
 
 ## Archivos
-- `app.py` — interfaz Streamlit (4 pestañas).
+- `app.py` — interfaz Streamlit (5 pestañas).
 - `modelo_core.py` — todo el modelo (ingesta, ELO, Dixon-Coles, simulador).
+- `analisis_forma.py` — análisis de forma reciente / expectativa de goles.
+- `scrape_fifa_ranking.py` — descarga el ranking FIFA a `fifa_ranking.csv`.
 - `requirements.txt` — dependencias.
 - `results_actualizado_mundial_2026.csv` — datos (jugados + fixtures por jugar).
 - `MODELO_1_2.ipynb` — notebook original (misma lógica).
@@ -24,8 +26,23 @@ Se abre en http://localhost:8501
 2. **Predecir partido** — elige dos selecciones y ve la predicción de cada
    método por separado (Poisson+MC, XGBoost sin calibrar, XGBoost calibrado,
    Dixon-Coles) y el ensemble, más los marcadores más probables.
-3. **Ranking ELO** — clasificación ELO (historia completa, 8 años).
-4. **Evaluación** — comparativa LogLoss / Brier / Accuracy de cada método.
+3. **Análisis de forma** — expectativa de goles a partir de los últimos 12
+   partidos oficiales de cada selección: decaimiento temporal, ponderación
+   por nivel del rival, ancla al ranking FIFA, historial directo (H2H) y
+   corrección de resultados bajos. Muestra el desglose paso a paso.
+4. **Ranking ELO** — clasificación ELO (historia completa, 8 años).
+5. **Evaluación** — comparativa LogLoss / Brier / RPS / Accuracy de cada
+   método, con **validación temporal walk-forward** (robustez fuera de muestra).
+
+### Ranking FIFA (ancla del análisis de forma)
+La pestaña de análisis de forma usa el ranking FIFA como ancla. Para
+generarlo (una vez, o cuando FIFA publique uno nuevo):
+```bash
+pip install requests lxml
+python scrape_fifa_ranking.py   # crea fifa_ranking.csv → súbelo al repo
+```
+Si `fifa_ranking.csv` no existe, la app cae automáticamente al **ELO** como
+ancla (no se rompe nada).
 
 ## Actualizar resultados (ingesta diaria)
 1. Escribe el marcador del partido jugado en
