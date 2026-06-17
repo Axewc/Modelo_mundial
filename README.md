@@ -4,9 +4,10 @@ App de Streamlit que ejecuta el pipeline completo (ELO, Poisson, XGBoost,
 Dixon-Coles) y simula el torneo con el **cuadro oficial FIFA 2026**.
 
 ## Archivos
-- `app.py` — interfaz Streamlit (5 pestañas).
+- `app.py` — interfaz Streamlit (6 pestañas).
 - `modelo_core.py` — todo el modelo (ingesta, ELO, Dixon-Coles, simulador).
 - `analisis_forma.py` — análisis de forma reciente / expectativa de goles.
+- `ingesta.py` — partidos del día, contraste modelo vs realidad, reentrenamiento.
 - `scrape_fifa_ranking.py` — descarga el ranking FIFA a `fifa_ranking.csv`.
 - `requirements.txt` — dependencias.
 - `results_actualizado_mundial_2026.csv` — datos (jugados + fixtures por jugar).
@@ -30,8 +31,13 @@ Se abre en http://localhost:8501
    partidos oficiales de cada selección: decaimiento temporal, ponderación
    por nivel del rival, ancla al ranking FIFA, historial directo (H2H) y
    corrección de resultados bajos. Muestra el desglose paso a paso.
-4. **Ranking ELO** — clasificación ELO (historia completa, 8 años).
-5. **Evaluación** — comparativa LogLoss / Brier / RPS / Accuracy de cada
+4. **Resultados del día** — ingesta de los partidos de la jornada (manual o
+   con el botón "traer de ESPN"), **contraste** de lo modelado vs el resultado
+   real (acierto/Brier/LogLoss acumulados) y **reentrenamiento** con los
+   partidos nuevos. ⚠️ El almacenamiento en Cloud es efímero: descarga el CSV
+   actualizado para conservar los cambios (re-súbelo al repo).
+5. **Ranking ELO** — clasificación ELO (historia completa, 8 años).
+6. **Evaluación** — comparativa LogLoss / Brier / RPS / Accuracy de cada
    método, con **validación temporal walk-forward** (robustez fuera de muestra).
 
 ### Ranking FIFA (ancla del análisis de forma)
