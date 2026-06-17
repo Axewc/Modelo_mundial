@@ -19,7 +19,7 @@ los demas metodos.
 import collections
 import numpy as np
 import pandas as pd
-from scipy.stats import poisson
+from scipy.stats import poisson, nbinom
 from scipy.optimize import minimize_scalar
 
 from sklearn.preprocessing import StandardScaler
@@ -347,6 +347,56 @@ def poisson_result_probs(lh, la, max_goals=10):
     return np.array([p_away / s, p_draw / s, p_home / s])
 
 
+# ============================================================
+# 4c) BINOMIAL NEGATIVA (cola más gruesa que Poisson)
+# ============================================================
+# Misma media lambda del GLM de Dixon-Coles, pero distribución de conteo con
+# sobredispersion (var = mu + mu^2/r). r grande -> Poisson; r chico -> mas cola
+# (mas goleadas, y tambien mas 0-0). Se conserva la correccion rho.
+def _nb_pmf(ks, mu, r):
+    mu = max(float(mu), 1e-6)
+    return nbinom.pmf(ks, r, r / (r + mu))
+
+
+def nb_score_matrix(pred, home, away, neutral, r, max_goals=10):
+    lh, la = pred["lambdas"](home, away, neutral)
+    rho = pred["rho"]
+    ks = np.arange(max_goals + 1)
+    h = _nb_pmf(ks, lh, r)
+    a = _nb_pmf(ks, la, r)
+    M = np.outer(h, a)
+    M[0, 0] *= 1 - lh * la * rho; M[0, 1] *= 1 + lh * rho
+    M[1, 0] *= 1 + la * rho; M[1, 1] *= 1 - rho
+    M = np.clip(M, 0, None)
+    return M / M.sum()
+
+
+def nb_result_probs(pred, home, away, neutral, r, max_goals=10):
+    M = nb_score_matrix(pred, home, away, neutral, r, max_goals)
+    return np.array([np.triu(M, 1).sum(), np.trace(M), np.tril(M, -1).sum()])
+
+
+def select_size_nb(pred, d_val, sizes=(2, 3, 4, 6, 10, 20, 50)):
+    """Elige el parámetro de dispersión r minimizando el log-loss 1X2 sobre
+    un periodo de validación. `pred` es un Dixon-Coles ya ajustado (la media
+    no cambia con r). r alto = casi Poisson."""
+    y = d_val.apply(
+        lambda x: 2 if x["home_score"] > x["away_score"]
+        else (0 if x["home_score"] < x["away_score"] else 1), axis=1).values
+    best_r, best_ll = sizes[len(sizes) // 2], np.inf
+    for r in sizes:
+        try:
+            P = np.array([nb_result_probs(pred, h, a, bool(n), r) for h, a, n in
+                          zip(d_val["home_team"], d_val["away_team"],
+                              d_val["neutral_match"])])
+        except Exception:
+            continue
+        ll = log_loss(y, np.clip(P, 1e-15, 1), labels=CLASSES)
+        if ll < best_ll:
+            best_ll, best_r = ll, r
+    return best_r
+
+
 # --- Seleccion de la regularizacion (alpha) del modelo de goles DC ---
 def _dc_lambdas_df(pred, d):
     atk, dfn = pred["atk"], pred["dfn"]
@@ -578,6 +628,18 @@ def run_pipeline(path=CSV_DEFAULT, extra=None):
                     zip(df.iloc[split:]["home_team"], df.iloc[split:]["away_team"],
                         df.iloc[split:]["neutral_match"])])
     evals.append(_evaluar("Dixon-Coles", y_true, pdc))
+
+    # neg-binomial: misma media DC, dispersion r elegida por validacion
+    try:
+        r_nb = select_size_nb(fit_dc(df.iloc[:a_cut], alpha=alpha_dc),
+                              df.iloc[a_cut:split])
+    except Exception:
+        r_nb = 10
+    pnb = np.array([nb_result_probs(dc_eval, h, a, bool(n), r_nb) for h, a, n in
+                    zip(df.iloc[split:]["home_team"], df.iloc[split:]["away_team"],
+                        df.iloc[split:]["neutral_match"])])
+    evals.append(_evaluar("Neg-Binomial", y_true, pnb))
+
     dc_full = fit_dc(df, alpha=alpha_dc)
 
     tabla_eval = (pd.DataFrame(evals).sort_values("LogLoss")
@@ -608,6 +670,7 @@ def run_pipeline(path=CSV_DEFAULT, extra=None):
         "h2h": h2h, "equipos_actuales": equipos_actuales,
         "tabla_eval": tabla_eval, "has_xgb": HAS_XGB,
         "alpha_dc": alpha_dc, "dc_rho": dc_full["rho"], "dc_gamma": dc_full["gamma"],
+        "r_nb": r_nb,
         "mae_home": float(np.mean(np.abs(pred_home - test["home_score"].values))),
         "mae_away": float(np.mean(np.abs(pred_away - test["away_score"].values))),
     }
