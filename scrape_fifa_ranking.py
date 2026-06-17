@@ -6,105 +6,95 @@ como ancla en la pestaña de "Análisis de forma".
 
 CÓMO USARLO (una sola vez, o cuando FIFA publique ranking nuevo):
 
-    pip install requests pandas lxml
+    pip install requests pandas
     python scrape_fifa_ranking.py
 
-Si el endpoint principal de FIFA cambia, el script cae automáticamente a
-Wikipedia (top de la tabla). El CSV resultante lo lee analisis_forma.py,
-que ya normaliza los nombres de selección a los del CSV de resultados.
+El script usa la API interna de inside.fifa.com (descubierta inspeccionando
+el JS de la página). No requiere auth ni clave privada.
 
 NOTA: este repo se ejecuta en un entorno sin salida de red, por eso el
 scraping se hace en TU máquina y el CSV se sube al repo. La app, en
 Streamlit Cloud, solo lee el CSV (no scrapea en vivo).
 """
 import sys
+import re
+import json
 import pandas as pd
 
 SALIDA = "fifa_ranking.csv"
 
-# Endpoint JSON usado por inside.fifa.com para la tabla de ranking.
-FIFA_API = ("https://inside.fifa.com/api/ranking-overview"
-            "?locale=en&dateId=ranking_{date_id}")
-# Página de respaldo (suele traer el top de la clasificación).
-WIKI_URL = "https://en.wikipedia.org/wiki/FIFA_Men%27s_World_Ranking"
+# URL del sitio de FIFA (para descubrir el último dateId)
+INSIDE_FIFA_RANKING_URL = "https://inside.fifa.com/fifa-world-ranking/men"
+# Base URL de la API FDCP (hardcoded en el JS de inside.fifa.com)
+FDCP_BASE = "https://api.fifa.com/api/v3"
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+    "Accept": "application/json",
+    "Origin": "https://inside.fifa.com",
+    "Referer": "https://inside.fifa.com/",
+}
 
 
-def _via_fifa_api():
-    """Ranking completo desde la API de inside.fifa.com."""
-    import requests
-    s = requests.Session()
-    s.headers.update({"User-Agent": "Mozilla/5.0", "Accept": "application/json"})
-    # 1) descubrir el último dateId disponible
-    meta = s.get("https://inside.fifa.com/api/ranking-overview?locale=en", timeout=20)
-    meta.raise_for_status()
-    j = meta.json()
-    fechas = j.get("ranks") or j.get("dates") or []
-    date_id = None
-    if isinstance(j.get("rankings"), list) and j["rankings"]:
-        # algunos esquemas ya devuelven el ranking directo
-        return _parse_fifa_json(j)
-    if fechas:
-        date_id = (fechas[0].get("id") or fechas[0].get("dateId")
-                   if isinstance(fechas[0], dict) else fechas[0])
-    if date_id:
-        r = s.get(FIFA_API.format(date_id=date_id), timeout=20)
-        r.raise_for_status()
-        return _parse_fifa_json(r.json())
-    raise RuntimeError("No se pudo determinar el dateId del ranking FIFA")
+def _get_latest_date_id(session):
+    """Lee la página de FIFA y extrae el ID de la fecha más reciente."""
+    r = session.get(INSIDE_FIFA_RANKING_URL, headers=HEADERS, timeout=20)
+    r.raise_for_status()
+    m = re.search(r'"allAvailableDates"\s*:\s*(\[[^\]]*\])', r.text)
+    if not m:
+        raise RuntimeError("No se encontró allAvailableDates en la página de FIFA")
+    dates = json.loads(m.group(1))
+    if not dates:
+        raise RuntimeError("La lista allAvailableDates está vacía")
+    # El primer elemento es siempre el más reciente
+    date_id = dates[0].get("id") or dates[0].get("dateId")
+    if not date_id:
+        raise RuntimeError(f"Estructura inesperada en allAvailableDates: {dates[0]}")
+    return date_id
 
 
-def _parse_fifa_json(j):
-    filas = j.get("rankings") or j.get("data") or []
-    out = []
-    for it in filas:
-        team = (it.get("name") or it.get("teamName")
-                or (it.get("team") or {}).get("name"))
-        rank = it.get("rankingItem", {}).get("rank") if "rankingItem" in it else it.get("rank")
-        pts = it.get("rankingItem", {}).get("totalPoints") if "rankingItem" in it else it.get("totalPoints") or it.get("points")
-        if team and pts is not None:
-            out.append({"rank": rank, "team": str(team).strip(), "points": float(pts)})
-    if not out:
-        raise RuntimeError("JSON de FIFA sin filas reconocibles")
-    return pd.DataFrame(out)
-
-
-def _via_wikipedia():
-    """Respaldo: lee la primera tabla con columnas Rank/Team/Points."""
-    tablas = pd.read_html(WIKI_URL)
-    for t in tablas:
-        cols = [str(c).lower() for c in t.columns]
-        if any("team" in c for c in cols) and any("point" in c for c in cols):
-            t.columns = [str(c) for c in t.columns]
-            cteam = next(c for c in t.columns if "team" in c.lower())
-            cpts = next(c for c in t.columns if "point" in c.lower())
-            crank = next((c for c in t.columns if "rank" in c.lower()), None)
-            out = pd.DataFrame({
-                "rank": t[crank] if crank else range(1, len(t) + 1),
-                "team": t[cteam].astype(str).str.replace(r"\[.*\]", "", regex=True).str.strip(),
-                "points": pd.to_numeric(t[cpts], errors="coerce"),
-            }).dropna(subset=["points"])
-            return out
-    raise RuntimeError("No se encontró una tabla de ranking en Wikipedia")
+def _fetch_rankings(session, date_id):
+    """Descarga todos los rankings para el dateId dado."""
+    url = (f"{FDCP_BASE}/fifarankings/rankings/rankingsbyschedule"
+           f"?rankingScheduleId={date_id}&language=en")
+    r = session.get(url, headers=HEADERS, timeout=30)
+    r.raise_for_status()
+    j = r.json()
+    results = j.get("Results") or j.get("results") or []
+    if not results:
+        raise RuntimeError(f"La API devolvió 0 resultados para dateId={date_id}")
+    rows = []
+    for it in results:
+        # TeamName es una lista [{Locale, Description}, ...]
+        names = it.get("TeamName") or []
+        name_en = next(
+            (n["Description"] for n in names if "en" in n.get("Locale", "").lower()),
+            names[0]["Description"] if names else None,
+        )
+        rank = it.get("Rank")
+        pts = it.get("TotalPoints") or it.get("DecimalTotalPoints")
+        if name_en and pts is not None:
+            rows.append({"rank": rank, "team": str(name_en).strip(), "points": float(pts)})
+    if not rows:
+        raise RuntimeError("No se pudo parsear ninguna fila del JSON de FIFA")
+    return pd.DataFrame(rows)
 
 
 def main():
-    df = None
+    import requests
+    session = requests.Session()
     try:
-        print("Intentando API de FIFA…")
-        df = _via_fifa_api()
-        print(f"  OK: {len(df)} selecciones desde FIFA.")
+        print("Buscando fecha más reciente del ranking FIFA…")
+        date_id = _get_latest_date_id(session)
+        print(f"  Usando dateId: {date_id}")
+        print("Descargando rankings…")
+        df = _fetch_rankings(session, date_id)
+        print(f"  OK: {len(df)} selecciones.")
     except Exception as e:
-        print(f"  Falló FIFA API ({type(e).__name__}: {e}). Probando Wikipedia…")
-        try:
-            df = _via_wikipedia()
-            print(f"  OK: {len(df)} selecciones desde Wikipedia.")
-        except Exception as e2:
-            print(f"  Falló Wikipedia ({type(e2).__name__}: {e2}).", file=sys.stderr)
-            print("No se pudo descargar el ranking. Revisa tu conexión o el "
-                  "formato de la fuente.", file=sys.stderr)
-            sys.exit(1)
+        print(f"  Falló ({type(e).__name__}: {e})", file=sys.stderr)
+        sys.exit(1)
 
-    df = df.dropna(subset=["points"]).reset_index(drop=True)
+    df = df.dropna(subset=["points"]).sort_values("rank").reset_index(drop=True)
     df["points"] = df["points"].astype(float)
     df.to_csv(SALIDA, index=False)
     print(f"\nGuardado {SALIDA} con {len(df)} filas. Súbelo al repo y "
