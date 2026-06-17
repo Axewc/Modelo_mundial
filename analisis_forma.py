@@ -61,6 +61,13 @@ NOMBRES_FIFA_A_CSV = {
     "Brunei Darussalam": "Brunei",
     "Hong Kong, China": "Hong Kong",
     "Chinese Taipei": "Taiwan",
+    # nombres confirmados contra el fifa_ranking.csv real (API de FIFA)
+    "Cabo Verde": "Cape Verde",
+    "DPR Korea": "North Korea",
+    "Kyrgyz Republic": "Kyrgyzstan",
+    "St. Vincent / Grenadines": "Saint Vincent and the Grenadines",
+    "The Gambia": "Gambia",
+    "US Virgin Islands": "United States Virgin Islands",
 }
 
 
