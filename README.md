@@ -56,6 +56,21 @@ El token y la clave NUNCA van al repo (`.streamlit/secrets.toml` está en
 `.gitignore`). Sin esta config, el botón se oculta y queda la descarga manual.
 Hacer commit a `main` dispara un redeploy (~1-2 min) que reentrena el modelo.
 
+### Cuotas de casas de apuestas (comparativo + blend)
+En la pestaña **Predecir partido** se puede comparar la probabilidad del
+modelo con la **implícita del mercado** (quitando el margen de la casa) y
+mezclarlas (blend, pool logarítmico). Las cuotas se traen de The Odds API;
+para habilitarlo, en Streamlit Cloud → Secrets:
+```toml
+[odds]
+api_key  = "tu_api_key_de_the_odds_api"
+sport    = "soccer_fifa_world_cup"
+provider = "the_odds_api"
+```
+Sin `api_key`, se pueden **ingresar las cuotas 1/X/2 a mano** (no requiere red
+ni clave). El blend con peso al mercado mejora la calibración pero hace que el
+modelo "siga" al mercado; úsalo según tu objetivo.
+
 ### Ranking FIFA (ancla del análisis de forma)
 La pestaña de análisis de forma usa el ranking FIFA como ancla. Para
 generarlo (una vez, o cuando FIFA publique uno nuevo):
