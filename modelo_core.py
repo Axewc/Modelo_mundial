@@ -72,8 +72,23 @@ COMP_FUERTE = ["FIFA World Cup", "UEFA Euro", "Copa América",
 # ============================================================
 # 1) INGESTA
 # ============================================================
-def load_data(path=CSV_DEFAULT):
+def load_data(path=CSV_DEFAULT, extra=None):
     df_raw = pd.read_csv(path)
+    if extra is not None and len(extra) > 0:
+        ex = extra.copy()
+        for c in df_raw.columns:
+            if c not in ex.columns:
+                ex[c] = np.nan
+        df_raw = pd.concat([df_raw, ex[df_raw.columns]], ignore_index=True)
+        # Dedup SOLO de las claves añadidas: el partido nuevo (al final) gana
+        # ante un fixture ya existente, sin tocar duplicados preexistentes.
+        keys = ["date", "home_team", "away_team"]
+        ex_keys = set(map(tuple, ex[keys].astype(str).itertuples(index=False)))
+        en_extra = pd.Series(
+            [t in ex_keys for t in df_raw[keys].astype(str).itertuples(index=False)],
+            index=df_raw.index)
+        dup = df_raw.duplicated(subset=keys, keep="last")
+        df_raw = df_raw[~(dup & en_extra)].reset_index(drop=True)
     df_raw["date"] = pd.to_datetime(df_raw["date"])
     tiene = df_raw["home_score"].notna() & df_raw["away_score"].notna()
     completos = df_raw[["date", "home_team", "away_team"]].notna().all(axis=1)
@@ -508,8 +523,8 @@ def _evaluar(nombre, y, proba):
             "Accuracy": accuracy_score(y, pred)}
 
 
-def run_pipeline(path=CSV_DEFAULT):
-    df_full, por_jugar = load_data(path)
+def run_pipeline(path=CSV_DEFAULT, extra=None):
+    df_full, por_jugar = load_data(path, extra=extra)
     df, elo = compute_elo(df_full)
     dm, historial, h2h = build_dataset(df)
 

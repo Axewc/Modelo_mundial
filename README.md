@@ -4,9 +4,10 @@ App de Streamlit que ejecuta el pipeline completo (ELO, Poisson, XGBoost,
 Dixon-Coles) y simula el torneo con el **cuadro oficial FIFA 2026**.
 
 ## Archivos
-- `app.py` — interfaz Streamlit (5 pestañas).
+- `app.py` — interfaz Streamlit (6 pestañas).
 - `modelo_core.py` — todo el modelo (ingesta, ELO, Dixon-Coles, simulador).
 - `analisis_forma.py` — análisis de forma reciente / expectativa de goles.
+- `ingesta.py` — partidos del día, contraste modelo vs realidad, reentrenamiento.
 - `scrape_fifa_ranking.py` — descarga el ranking FIFA a `fifa_ranking.csv`.
 - `requirements.txt` — dependencias.
 - `results_actualizado_mundial_2026.csv` — datos (jugados + fixtures por jugar).
@@ -30,9 +31,30 @@ Se abre en http://localhost:8501
    partidos oficiales de cada selección: decaimiento temporal, ponderación
    por nivel del rival, ancla al ranking FIFA, historial directo (H2H) y
    corrección de resultados bajos. Muestra el desglose paso a paso.
-4. **Ranking ELO** — clasificación ELO (historia completa, 8 años).
-5. **Evaluación** — comparativa LogLoss / Brier / RPS / Accuracy de cada
+4. **Resultados del día** — ingesta de los partidos de la jornada (manual o
+   con el botón "traer de ESPN"), **contraste** de lo modelado vs el resultado
+   real (acierto/Brier/LogLoss acumulados) y **reentrenamiento** con los
+   partidos nuevos. ⚠️ El almacenamiento en Cloud es efímero: descarga el CSV
+   actualizado para conservar los cambios (re-súbelo al repo).
+5. **Ranking ELO** — clasificación ELO (historia completa, 8 años).
+6. **Evaluación** — comparativa LogLoss / Brier / RPS / Accuracy de cada
    método, con **validación temporal walk-forward** (robustez fuera de muestra).
+
+### Guardar resultados directo a GitHub (opcional, persistente)
+La pestaña "Resultados del día" puede commitear el dataset actualizado de
+vuelta al repo (así el reentrenamiento es permanente, no solo de sesión).
+Para habilitarlo, en Streamlit Cloud → app → Settings → **Secrets**:
+```toml
+[github]
+token    = "github_pat_xxx"   # fine-grained PAT, repo Axewc/Modelo_mundial, Contents: R/W
+repo     = "Axewc/Modelo_mundial"
+branch   = "main"
+path     = "results_actualizado_mundial_2026.csv"
+password = "una-clave-secreta" # protege el botón (la app es pública)
+```
+El token y la clave NUNCA van al repo (`.streamlit/secrets.toml` está en
+`.gitignore`). Sin esta config, el botón se oculta y queda la descarga manual.
+Hacer commit a `main` dispara un redeploy (~1-2 min) que reentrena el modelo.
 
 ### Ranking FIFA (ancla del análisis de forma)
 La pestaña de análisis de forma usa el ranking FIFA como ancla. Para

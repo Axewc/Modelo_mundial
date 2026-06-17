@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 import modelo_core as mc
 import analisis_forma as af
+import ingesta as ing
 
 st.set_page_config(page_title="Mundial 2026 — Modelo", layout="wide",
                    page_icon="⚽", initial_sidebar_state="expanded")
@@ -22,8 +23,9 @@ st.markdown("""
 
 
 @st.cache_resource(show_spinner="Entrenando modelos (ELO · Poisson · XGBoost · Dixon-Coles)…")
-def cargar(path):
-    return mc.run_pipeline(path)
+def cargar(path, _extra, extra_sig):
+    # _extra (DataFrame) no se hashea; extra_sig es la clave de caché
+    return mc.run_pipeline(path, extra=_extra)
 
 
 @st.cache_data(show_spinner="Simulando el torneo…")
@@ -50,6 +52,45 @@ def pct_col(label, help=None):
                                            min_value=0, max_value=100, help=help)
 
 
+def mostrar_mercados(mk, top, local, visitante):
+    """Pinta los mercados agrupados + el marcador estrella de cada resultado."""
+    st.markdown("**Mercados agrupados** (capturan las goleadas que ningún "
+                "marcador individual refleja)")
+    a = st.columns(4)
+    a[0].metric("Más de 2.5 goles", f"{mk['over25']*100:.0f}%")
+    a[1].metric("Ambos marcan", f"{mk['btts']*100:.0f}%")
+    a[2].metric(f"{local} por 2+", f"{mk['local_2plus']*100:.0f}%")
+    a[3].metric(f"{visitante} por 2+", f"{mk['visit_2plus']*100:.0f}%")
+    b = st.columns(3)
+    b[0].metric(f"Doble: {local} o empate", f"{mk['doble_1x']*100:.0f}%")
+    b[1].metric(f"Doble: {local} o {visitante}", f"{mk['doble_12']*100:.0f}%")
+    b[2].metric(f"Doble: empate o {visitante}", f"{mk['doble_x2']*100:.0f}%")
+    st.caption(
+        f"Marcador más probable **por resultado** — "
+        f"Gana {local}: **{top['local']['marcador']}** ({top['local']['prob']*100:.1f}%) · "
+        f"Empate: **{top['empate']['marcador']}** ({top['empate']['prob']*100:.1f}%) · "
+        f"Gana {visitante}: **{top['visitante']['marcador']}** ({top['visitante']['prob']*100:.1f}%)")
+
+
+def _gh_secrets():
+    """Lee la config [github] de los Secrets de Streamlit (vacío si no hay)."""
+    try:
+        return dict(st.secrets.get("github", {}))
+    except Exception:
+        return {}
+
+
+def _peso_torneo(torneo):
+    t = str(torneo).lower()
+    if "world cup" in t and "qual" not in t:
+        return 2.0
+    if "qualif" in t:
+        return 1.5
+    if "friendly" in t or "amistoso" in t:
+        return 0.7
+    return 1.0
+
+
 def tabla_metodos(metodos, local, visitante):
     filas = [{"Método": m,
               f"Gana {local}": round(p[2] * 100, 1),
@@ -65,13 +106,20 @@ def tabla_metodos(metodos, local, visitante):
 st.sidebar.title("⚽ Mundial 2026")
 CSV = st.sidebar.text_input("Archivo de datos", mc.CSV_DEFAULT)
 
+# partidos añadidos en la sesión y ya "aplicados" al modelo (reentrenamiento)
+aplicados = st.session_state.get("aplicados", [])
+extra_df = ing.a_filas_dataset(aplicados) if aplicados else None
+extra_sig = f"n{len(aplicados)}" if aplicados else "base"
+
 try:
-    art = cargar(CSV)
+    art = cargar(CSV, extra_df, extra_sig)
 except FileNotFoundError:
     st.error(f"No se encontró el archivo: **{CSV}**")
     st.stop()
 
-data_sig = f"{len(art['df'])}-{art['df']['date'].max()}"
+data_sig = f"{len(art['df'])}-{art['df']['date'].max()}-{extra_sig}"
+if aplicados:
+    st.sidebar.success(f"Modelo reentrenado con {len(aplicados)} partido(s) de la sesión.")
 
 with st.sidebar:
     st.divider()
@@ -97,9 +145,9 @@ st.title("Modelo predictivo — Copa del Mundo 2026")
 st.caption("ELO (8 años) · Dixon-Coles (ataque/defensa) · XGBoost calibrado · "
            "simulador con cuadro oficial FIFA.")
 
-tab1, tab2, tab5, tab3, tab4 = st.tabs(
+tab1, tab2, tab5, tab6, tab3, tab4 = st.tabs(
     ["🏆 Simulador del torneo", "🆚 Predecir partido", "🔬 Análisis de forma",
-     "📊 Ranking ELO", "🧪 Evaluación"])
+     "📥 Resultados del día", "📊 Ranking ELO", "🧪 Evaluación"])
 
 # ==========================================================
 # TAB 1: SIMULADOR
@@ -197,6 +245,14 @@ with tab2:
             st.dataframe(r["marcadores"], width="stretch", hide_index=True,
                          column_config={"Prob %": pct_col("Probabilidad")})
 
+        st.divider()
+        try:
+            Mdc = mc.dc_score_matrix(art["dc_full"], local, visitante, bool(neutral))
+            mostrar_mercados(af.mercados_agrupados(Mdc),
+                             af.marcador_top_por_resultado(Mdc), local, visitante)
+        except Exception:
+            pass
+
 # ==========================================================
 # TAB 5: ANÁLISIS DE FORMA
 # ==========================================================
@@ -260,12 +316,207 @@ with tab5:
             st.caption("Ataque: goles esperados que marca · Defensa: goles que "
                        "recibe, ya ajustados por el nivel de los rivales.")
 
+        st.divider()
+        mostrar_mercados(r["mercados"], r["top_resultado"], loc, vis)
+
         with st.expander(f"Ver últimos partidos ponderados — {loc}"):
             st.dataframe(r["forma_local"]["detalle"], width="stretch",
                          hide_index=True)
         with st.expander(f"Ver últimos partidos ponderados — {vis}"):
             st.dataframe(r["forma_visitante"]["detalle"], width="stretch",
                          hide_index=True)
+
+
+# ==========================================================
+# TAB 6: RESULTADOS DEL DÍA (ingesta + contraste + reentrenar)
+# ==========================================================
+with tab6:
+    st.markdown("##### 📥 Resultados del día — ingesta, contraste y reentrenamiento")
+    st.caption("Trae o añade los partidos del día, guarda la predicción del "
+               "modelo, registra los resultados reales para contrastar, y "
+               "reentrena con los nuevos partidos. ⚠️ En Streamlit Cloud el "
+               "almacenamiento es **efímero**: usa el botón de descarga para "
+               "conservar los cambios (re-sube el CSV al repo).")
+
+    pj_all = art["por_jugar"].copy()
+    pj_all["date"] = pd.to_datetime(pj_all["date"]).dt.strftime("%Y-%m-%d")
+    default_day = (pd.to_datetime(pj_all["date"]).min()
+                   if len(pj_all) else pd.Timestamp("today"))
+    fecha = st.date_input("Día", value=default_day)
+    fsel = pd.Timestamp(fecha).strftime("%Y-%m-%d")
+
+    cbtn = st.columns([1.3, 1, 2])
+    if cbtn[0].button("🌐 Traer de ESPN (Mundial)"):
+        try:
+            fx = ing.traer_partidos_del_dia(fsel)
+            st.session_state["fx_dia"] = fx.to_dict("records")
+            st.success(f"Traídos {len(fx)} partido(s). Revísalos y edítalos abajo.")
+        except Exception as e:
+            st.warning(f"No se pudo traer automáticamente ({type(e).__name__}). "
+                       f"Añade los partidos a mano en la tabla. Detalle: {e}")
+
+    # Tabla editable: fixtures del CSV de ese día + lo traído de ESPN.
+    pj_dia = pj_all[pj_all["date"] == fsel]
+    traidos = pd.DataFrame(st.session_state.get("fx_dia", []))
+    partes = [d for d in [pj_dia, traidos] if len(d)]
+    tabla = (pd.concat(partes, ignore_index=True).reindex(columns=ing.COLS)
+             if partes else pd.DataFrame(columns=ing.COLS))
+    if len(tabla):
+        tabla = tabla.drop_duplicates(subset=["date", "home_team", "away_team"])
+        tabla["date"] = tabla["date"].fillna(fsel)
+
+    st.caption("Edita marcadores y añade filas (botón ➕). Deja el marcador "
+               "vacío si el partido aún no se juega.")
+    editado = st.data_editor(
+        tabla, num_rows="dynamic", width="stretch", key="editor_dia",
+        column_config={
+            "home_score": st.column_config.NumberColumn("GL", min_value=0, step=1),
+            "away_score": st.column_config.NumberColumn("GV", min_value=0, step=1),
+            "neutral": st.column_config.TextColumn("neutral"),
+        })
+
+    c2 = st.columns(2)
+    if c2[0].button("📸 Guardar predicción del modelo"):
+        log = st.session_state.get("pred_log", [])
+        idx = {(r["date"], r["home_team"], r["away_team"]): i
+               for i, r in enumerate(log)}
+        nuevos = 0
+        for _, row in editado.iterrows():
+            if not row.get("home_team") or not row.get("away_team"):
+                continue
+            try:
+                neu = 1 if str(row.get("neutral")).lower() in ("true", "1", "sí", "si") else 0
+                p = mc.predict_match(art, row["home_team"], row["away_team"],
+                                     neu, _peso_torneo(row.get("tournament")))
+                p = p["metodos"]["ENSEMBLE"]
+            except Exception:
+                continue  # equipo no presente en los datos: se omite
+            key = (str(row["date"]), row["home_team"], row["away_team"])
+            entry = {"date": str(row["date"]), "home_team": row["home_team"],
+                     "away_team": row["away_team"],
+                     "p_away": float(p[0]), "p_draw": float(p[1]), "p_home": float(p[2]),
+                     "res": ing.resultado_clase(row.get("home_score"), row.get("away_score"))}
+            if key in idx:
+                log[idx[key]].update(entry)
+            else:
+                log.append(entry)
+                nuevos += 1
+        st.session_state["pred_log"] = log
+        st.success(f"Predicciones guardadas ({nuevos} nuevas · {len(log)} en total).")
+
+    if c2[1].button("✅ Registrar resultados y reentrenar", type="primary"):
+        comp = editado[editado["home_score"].notna() & editado["away_score"].notna()]
+        log = st.session_state.get("pred_log", [])
+        idx = {(r["date"], r["home_team"], r["away_team"]): i
+               for i, r in enumerate(log)}
+        apl = st.session_state.get("aplicados", [])
+        seen = {(str(a["date"]), a["home_team"], a["away_team"]) for a in apl}
+        add = 0
+        for _, row in comp.iterrows():
+            key = (str(row["date"]), row["home_team"], row["away_team"])
+            res = ing.resultado_clase(row["home_score"], row["away_score"])
+            if key in idx:
+                log[idx[key]]["res"] = res
+            if key not in seen:
+                apl.append({c: row.get(c) for c in ing.COLS})
+                seen.add(key)
+                add += 1
+        st.session_state["pred_log"] = log
+        st.session_state["aplicados"] = apl
+        if add:
+            st.success(f"{add} resultado(s) añadidos. Reentrenando el modelo…")
+            st.cache_resource.clear()
+            st.rerun()
+        else:
+            st.info("No hay partidos con marcador completo para añadir.")
+
+    # ---- Contraste modelo vs realidad ----
+    st.divider()
+    st.markdown("##### 📊 Contraste: lo modelado vs lo que pasó")
+    log_df = pd.DataFrame(st.session_state.get("pred_log", []))
+    detalle, resumen = (ing.evalua_contraste(log_df) if len(log_df)
+                        else (pd.DataFrame(), {}))
+    if resumen:
+        m = st.columns(4)
+        m[0].metric("Partidos resueltos", resumen["n"])
+        m[1].metric("Acierto 1X2", f"{resumen['accuracy']*100:.1f}%")
+        m[2].metric("Brier", f"{resumen['brier']:.3f}")
+        m[3].metric("LogLoss", f"{resumen['logloss']:.3f}",
+                    help=f"Baseline 33/33/33 = {resumen['logloss_baseline']:.3f} "
+                         "(menor que esto = el modelo aporta).")
+        show = detalle.copy()
+        cmap = {"p_away": "V", "p_draw": "E", "p_home": "L"}
+        show["pred"] = show[["p_away", "p_draw", "p_home"]].idxmax(axis=1).map(cmap)
+        show["real"] = show["res"].map({0: "V", 1: "E", 2: "L"})
+        show["✓"] = show["acierto"].map({1: "✅", 0: "❌"})
+        st.dataframe(
+            show[["date", "home_team", "away_team", "p_home", "p_draw", "p_away",
+                  "pred", "real", "✓", "brier", "logloss"]].round(3),
+            width="stretch", hide_index=True)
+        st.download_button("⬇️ Descargar track-record (CSV)",
+                           log_df.to_csv(index=False), "track_record.csv", "text/csv")
+    else:
+        st.info("Aún no hay predicciones resueltas. Guarda la predicción del "
+                "modelo y luego registra los resultados reales.")
+
+    # ---- Estado de sesión + exportar dataset ----
+    st.divider()
+    apl = st.session_state.get("aplicados", [])
+    st.caption(f"Partidos de la sesión aplicados al modelo: **{len(apl)}** "
+               "(el modelo ya está reentrenado con ellos).")
+    if apl:
+        full = ing.merge_resultados(pd.read_csv(CSV), ing.a_filas_dataset(apl))
+        d1, d2 = st.columns(2)
+        d1.download_button("⬇️ Descargar dataset actualizado (súbelo al repo)",
+                           full.to_csv(index=False),
+                           "results_actualizado_mundial_2026.csv", "text/csv")
+        if d2.button("🗑️ Descartar partidos de la sesión"):
+            st.session_state["aplicados"] = []
+            st.cache_resource.clear()
+            st.rerun()
+
+    # ---- Commit directo a GitHub (persistente) ----
+    st.divider()
+    st.markdown("##### 💾 Guardar en GitHub (persistente)")
+    gh = _gh_secrets()
+    if not gh.get("token"):
+        st.info("No configurado. Añade una sección `[github]` (token, repo, "
+                "branch, path, password) en los **Secrets** de Streamlit para "
+                "habilitar el commit directo. Mientras tanto, usa la descarga "
+                "de arriba.")
+    elif not apl:
+        st.caption("No hay partidos de la sesión para subir todavía.")
+    else:
+        st.caption("Sube el dataset actualizado al repo (dispara redeploy y deja "
+                   "el modelo reentrenado de forma permanente).")
+        pwd = st.text_input("Contraseña", type="password", key="gh_pwd")
+        tr_too = st.checkbox("Subir también el track-record", value=True)
+        if st.button("💾 Commit a GitHub", type="primary"):
+            import hmac
+            if not hmac.compare_digest(str(pwd), str(gh.get("password", ""))):
+                st.error("Contraseña incorrecta.")
+            else:
+                try:
+                    import gh_commit
+                    full = ing.merge_resultados(pd.read_csv(CSV),
+                                                ing.a_filas_dataset(apl))
+                    branch = gh.get("branch", "main")
+                    res = gh_commit.commit_file(
+                        gh["token"], gh["repo"],
+                        gh.get("path", "results_actualizado_mundial_2026.csv"),
+                        full.to_csv(index=False),
+                        f"Resultados vía app: +{len(apl)} partido(s)", branch=branch)
+                    extra = ""
+                    if tr_too and st.session_state.get("pred_log"):
+                        tr_csv = pd.DataFrame(st.session_state["pred_log"]).to_csv(index=False)
+                        gh_commit.commit_file(gh["token"], gh["repo"], "track_record.csv",
+                                              tr_csv, "Track-record vía app", branch=branch)
+                        extra = " · track-record subido"
+                    url = res.get("html_url") or "(commit ok)"
+                    st.success(f"✅ Commit hecho{extra}. La app se redesplegará en "
+                               f"~1-2 min y quedará reentrenada.\n\n{url}")
+                except Exception as e:
+                    st.error(f"Falló el commit: {type(e).__name__}: {e}")
 
 
 # ==========================================================
