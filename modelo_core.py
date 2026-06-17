@@ -124,13 +124,13 @@ def compute_elo(df_full):
 
         t = row["tournament"]
         if t == "Friendly":
-            pc = 0.45
+            pc = 0.60
         elif "qualification" in str(t).lower():
-            pc = 0.85
+            pc = 0.90
         elif t in COMP_FUERTE:
-            pc = 1.15
+            pc = 1.10
         else:
-            pc = 0.75
+            pc = 0.80
 
         k = 24 * pr * pc * mov
         elo[h] += np.clip(k * (sh - exp_home), -32, 32)
