@@ -348,7 +348,10 @@ def _dc_lambdas_df(pred, d):
 
 def _poisson_deviance(y, lam):
     y = np.asarray(y, float)
-    term = np.where(y > 0, y * np.log(y / lam), 0.0)
+    lam = np.clip(np.asarray(lam, float), 1e-9, None)
+    # usar 1.0 donde y==0 evita log(0); esos terminos se anulan igual (y=0)
+    safe = np.where(y > 0, y, 1.0)
+    term = np.where(y > 0, y * np.log(safe / lam), 0.0)
     return 2.0 * np.sum(term - (y - lam))
 
 
@@ -565,11 +568,10 @@ def run_pipeline(path=CSV_DEFAULT):
     tabla_eval = (pd.DataFrame(evals).sort_values("LogLoss")
                   .reset_index(drop=True).round(4))
 
-    # Validacion temporal walk-forward (robustez fuera de muestra / overfit)
-    try:
-        temporal = temporal_validation(df, dm)
-    except Exception:
-        temporal = {"folds": pd.DataFrame(), "resumen": pd.DataFrame()}
+    # NOTA: la validacion temporal walk-forward (temporal_validation) es
+    # costosa (reentrena varios modelos por fold). NO se ejecuta aqui para
+    # no bloquear el primer arranque de la app; se calcula bajo demanda
+    # usando los `df` y `dm` que devolvemos en el dict (ver app.py).
 
     # snapshot de forma actual (para el predictor)
     eq = []
@@ -585,12 +587,11 @@ def run_pipeline(path=CSV_DEFAULT):
                .sort_values("ELO", ascending=False).reset_index(drop=True).round(1))
 
     return {
-        "df": df, "por_jugar": por_jugar, "elo": elo, "ranking": ranking,
+        "df": df, "dm": dm, "por_jugar": por_jugar, "elo": elo, "ranking": ranking,
         "scaler": scaler, "m_home": m_home, "m_away": m_away,
         "m_xgb": m_xgb, "m_xgb_cal": m_xgb_cal, "dc_full": dc_full,
         "h2h": h2h, "equipos_actuales": equipos_actuales,
         "tabla_eval": tabla_eval, "has_xgb": HAS_XGB,
-        "tabla_temporal": temporal["resumen"], "temporal_folds": temporal["folds"],
         "alpha_dc": alpha_dc, "dc_rho": dc_full["rho"], "dc_gamma": dc_full["gamma"],
         "mae_home": float(np.mean(np.abs(pred_home - test["home_score"].values))),
         "mae_away": float(np.mean(np.abs(pred_away - test["away_score"].values))),
