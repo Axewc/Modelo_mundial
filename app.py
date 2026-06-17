@@ -52,6 +52,14 @@ def pct_col(label, help=None):
                                            min_value=0, max_value=100, help=help)
 
 
+def _gh_secrets():
+    """Lee la config [github] de los Secrets de Streamlit (vacío si no hay)."""
+    try:
+        return dict(st.secrets.get("github", {}))
+    except Exception:
+        return {}
+
+
 def _peso_torneo(torneo):
     t = str(torneo).lower()
     if "world cup" in t and "qual" not in t:
@@ -435,6 +443,49 @@ with tab6:
             st.session_state["aplicados"] = []
             st.cache_resource.clear()
             st.rerun()
+
+    # ---- Commit directo a GitHub (persistente) ----
+    st.divider()
+    st.markdown("##### 💾 Guardar en GitHub (persistente)")
+    gh = _gh_secrets()
+    if not gh.get("token"):
+        st.info("No configurado. Añade una sección `[github]` (token, repo, "
+                "branch, path, password) en los **Secrets** de Streamlit para "
+                "habilitar el commit directo. Mientras tanto, usa la descarga "
+                "de arriba.")
+    elif not apl:
+        st.caption("No hay partidos de la sesión para subir todavía.")
+    else:
+        st.caption("Sube el dataset actualizado al repo (dispara redeploy y deja "
+                   "el modelo reentrenado de forma permanente).")
+        pwd = st.text_input("Contraseña", type="password", key="gh_pwd")
+        tr_too = st.checkbox("Subir también el track-record", value=True)
+        if st.button("💾 Commit a GitHub", type="primary"):
+            import hmac
+            if not hmac.compare_digest(str(pwd), str(gh.get("password", ""))):
+                st.error("Contraseña incorrecta.")
+            else:
+                try:
+                    import gh_commit
+                    full = ing.merge_resultados(pd.read_csv(CSV),
+                                                ing.a_filas_dataset(apl))
+                    branch = gh.get("branch", "main")
+                    res = gh_commit.commit_file(
+                        gh["token"], gh["repo"],
+                        gh.get("path", "results_actualizado_mundial_2026.csv"),
+                        full.to_csv(index=False),
+                        f"Resultados vía app: +{len(apl)} partido(s)", branch=branch)
+                    extra = ""
+                    if tr_too and st.session_state.get("pred_log"):
+                        tr_csv = pd.DataFrame(st.session_state["pred_log"]).to_csv(index=False)
+                        gh_commit.commit_file(gh["token"], gh["repo"], "track_record.csv",
+                                              tr_csv, "Track-record vía app", branch=branch)
+                        extra = " · track-record subido"
+                    url = res.get("html_url") or "(commit ok)"
+                    st.success(f"✅ Commit hecho{extra}. La app se redesplegará en "
+                               f"~1-2 min y quedará reentrenada.\n\n{url}")
+                except Exception as e:
+                    st.error(f"Falló el commit: {type(e).__name__}: {e}")
 
 
 # ==========================================================

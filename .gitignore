@@ -3,3 +3,4 @@ __pycache__/
 *.joblib
 .ipynb_checkpoints/
 .DS_Store
+.streamlit/secrets.toml

@@ -40,6 +40,22 @@ Se abre en http://localhost:8501
 6. **Evaluación** — comparativa LogLoss / Brier / RPS / Accuracy de cada
    método, con **validación temporal walk-forward** (robustez fuera de muestra).
 
+### Guardar resultados directo a GitHub (opcional, persistente)
+La pestaña "Resultados del día" puede commitear el dataset actualizado de
+vuelta al repo (así el reentrenamiento es permanente, no solo de sesión).
+Para habilitarlo, en Streamlit Cloud → app → Settings → **Secrets**:
+```toml
+[github]
+token    = "github_pat_xxx"   # fine-grained PAT, repo Axewc/Modelo_mundial, Contents: R/W
+repo     = "Axewc/Modelo_mundial"
+branch   = "main"
+path     = "results_actualizado_mundial_2026.csv"
+password = "una-clave-secreta" # protege el botón (la app es pública)
+```
+El token y la clave NUNCA van al repo (`.streamlit/secrets.toml` está en
+`.gitignore`). Sin esta config, el botón se oculta y queda la descarga manual.
+Hacer commit a `main` dispara un redeploy (~1-2 min) que reentrena el modelo.
+
 ### Ranking FIFA (ancla del análisis de forma)
 La pestaña de análisis de forma usa el ranking FIFA como ancla. Para
 generarlo (una vez, o cuando FIFA publique uno nuevo):
