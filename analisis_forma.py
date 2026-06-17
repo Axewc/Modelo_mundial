@@ -197,6 +197,44 @@ def _h2h_ajuste(df, a, b, fecha_ref=None, n=8):
 # ============================================================
 # Matriz de marcadores con corrección de resultados bajos
 # ============================================================
+def mercados_agrupados(M):
+    """Mercados derivados de la matriz de marcadores (filas=local, col=visitante).
+    Captura las 'goleadas' que ningún marcador individual refleja: over/under,
+    ambos marcan, margen >=2, doble oportunidad."""
+    n = M.shape[0]
+    I = np.arange(n)
+    tot = np.add.outer(I, I)
+    diff = np.subtract.outer(I, I)  # local - visitante
+    p_local = float(np.tril(M, -1).sum())
+    p_emp = float(np.trace(M))
+    p_vis = float(np.triu(M, 1).sum())
+    over25 = float(M[tot >= 3].sum())
+    btts = float(M[1:, 1:].sum())
+    return {
+        "over25": over25, "under25": 1 - over25,
+        "btts": btts, "no_btts": 1 - btts,
+        "local_2plus": float(M[diff >= 2].sum()),
+        "visit_2plus": float(M[diff <= -2].sum()),
+        "doble_1x": p_local + p_emp, "doble_x2": p_emp + p_vis,
+        "doble_12": p_local + p_vis,
+    }
+
+
+def marcador_top_por_resultado(M):
+    """Marcador más probable DENTRO de cada resultado (local / empate / visitante).
+    Así un 3-1 aparece como el marcador estrella del resultado 'gana visitante'."""
+    n = M.shape[0]
+    best = {"local": (-1.0, (0, 0)), "empate": (-1.0, (0, 0)),
+            "visitante": (-1.0, (0, 0))}
+    for i in range(n):
+        for j in range(n):
+            cat = "local" if i > j else ("empate" if i == j else "visitante")
+            if M[i, j] > best[cat][0]:
+                best[cat] = (float(M[i, j]), (i, j))
+    return {k: {"marcador": f"{v[1][0]}–{v[1][1]}", "prob": v[0]}
+            for k, v in best.items()}
+
+
 def _matriz_dc(lh, la, rho=RHO_BAJOS, max_goals=MAX_GOLES):
     h = poisson.pmf(np.arange(max_goals + 1), lh)
     a = poisson.pmf(np.arange(max_goals + 1), la)
@@ -266,6 +304,8 @@ def predecir_partido_forma(df, elo, ranking, local, visitante,
         "prob": {"local": p_local, "empate": p_empate, "visitante": p_visit},
         "goles_esperados": {"local": round(lh, 2), "visitante": round(la, 2)},
         "marcadores": pd.DataFrame(marcadores),
+        "mercados": mercados_agrupados(M),
+        "top_resultado": marcador_top_por_resultado(M),
         "h2h": {"diff": round(h2h_diff, 2), "n": h2h_n},
         "forma_local": eL, "forma_visitante": eV,
         "indices": {"local": round(niv_L, 3), "visitante": round(niv_V, 3)},

@@ -52,6 +52,26 @@ def pct_col(label, help=None):
                                            min_value=0, max_value=100, help=help)
 
 
+def mostrar_mercados(mk, top, local, visitante):
+    """Pinta los mercados agrupados + el marcador estrella de cada resultado."""
+    st.markdown("**Mercados agrupados** (capturan las goleadas que ningún "
+                "marcador individual refleja)")
+    a = st.columns(4)
+    a[0].metric("Más de 2.5 goles", f"{mk['over25']*100:.0f}%")
+    a[1].metric("Ambos marcan", f"{mk['btts']*100:.0f}%")
+    a[2].metric(f"{local} por 2+", f"{mk['local_2plus']*100:.0f}%")
+    a[3].metric(f"{visitante} por 2+", f"{mk['visit_2plus']*100:.0f}%")
+    b = st.columns(3)
+    b[0].metric(f"Doble: {local} o empate", f"{mk['doble_1x']*100:.0f}%")
+    b[1].metric(f"Doble: {local} o {visitante}", f"{mk['doble_12']*100:.0f}%")
+    b[2].metric(f"Doble: empate o {visitante}", f"{mk['doble_x2']*100:.0f}%")
+    st.caption(
+        f"Marcador más probable **por resultado** — "
+        f"Gana {local}: **{top['local']['marcador']}** ({top['local']['prob']*100:.1f}%) · "
+        f"Empate: **{top['empate']['marcador']}** ({top['empate']['prob']*100:.1f}%) · "
+        f"Gana {visitante}: **{top['visitante']['marcador']}** ({top['visitante']['prob']*100:.1f}%)")
+
+
 def _gh_secrets():
     """Lee la config [github] de los Secrets de Streamlit (vacío si no hay)."""
     try:
@@ -225,6 +245,14 @@ with tab2:
             st.dataframe(r["marcadores"], width="stretch", hide_index=True,
                          column_config={"Prob %": pct_col("Probabilidad")})
 
+        st.divider()
+        try:
+            Mdc = mc.dc_score_matrix(art["dc_full"], local, visitante, bool(neutral))
+            mostrar_mercados(af.mercados_agrupados(Mdc),
+                             af.marcador_top_por_resultado(Mdc), local, visitante)
+        except Exception:
+            pass
+
 # ==========================================================
 # TAB 5: ANÁLISIS DE FORMA
 # ==========================================================
@@ -287,6 +315,9 @@ with tab5:
             ]), width="stretch", hide_index=True)
             st.caption("Ataque: goles esperados que marca · Defensa: goles que "
                        "recibe, ya ajustados por el nivel de los rivales.")
+
+        st.divider()
+        mostrar_mercados(r["mercados"], r["top_resultado"], loc, vis)
 
         with st.expander(f"Ver últimos partidos ponderados — {loc}"):
             st.dataframe(r["forma_local"]["detalle"], width="stretch",
