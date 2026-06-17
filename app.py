@@ -364,6 +364,13 @@ with tab6:
     if len(tabla):
         tabla = tabla.drop_duplicates(subset=["date", "home_team", "away_team"])
         tabla["date"] = tabla["date"].fillna(fsel)
+    # Tipos consistentes para el editor (evita choques de column_config):
+    # marcadores numéricos y 'neutral' booleano (aunque la tabla esté vacía).
+    for c in ("home_score", "away_score"):
+        tabla[c] = pd.to_numeric(tabla.get(c), errors="coerce")
+    tabla["neutral"] = (tabla.get("neutral")
+                        .map(lambda v: str(v).strip().lower() in ("true", "1", "sí", "si"))
+                        .astype(bool))
 
     st.caption("Edita marcadores y añade filas (botón ➕). Deja el marcador "
                "vacío si el partido aún no se juega.")
@@ -372,7 +379,7 @@ with tab6:
         column_config={
             "home_score": st.column_config.NumberColumn("GL", min_value=0, step=1),
             "away_score": st.column_config.NumberColumn("GV", min_value=0, step=1),
-            "neutral": st.column_config.TextColumn("neutral"),
+            "neutral": st.column_config.CheckboxColumn("Neutral"),
         })
 
     c2 = st.columns(2)
