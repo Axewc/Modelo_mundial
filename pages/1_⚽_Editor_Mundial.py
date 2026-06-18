@@ -77,7 +77,14 @@ def cargar(_sig):
                    & (df_full["date"] >= "2026-06-01")]
     wc = pd.concat([wc_j, por_jugar[por_jugar["tournament"] == "FIFA World Cup"]],
                    ignore_index=True)
-    return _norm_df(wc), groups
+    wc = _norm_df(wc)
+    # dedup por partido (tras normalizar nombres pueden colisionar grafías,
+    # p.ej. "Congo DR"/"DR Congo"); conserva la fila que ya trae marcador.
+    wc["_con"] = wc[["home_score", "away_score"]].notna().any(axis=1)
+    wc = (wc.sort_values("_con")
+          .drop_duplicates(subset=["date", "home_team", "away_team"], keep="last")
+          .drop(columns="_con").reset_index(drop=True))
+    return wc, groups
 
 
 sig = dt.date.today().isoformat()
