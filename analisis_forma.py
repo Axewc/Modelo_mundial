@@ -135,8 +135,21 @@ def construir_indices(df, elo, ranking=None):
 # ============================================================
 # Forma reciente de una selección
 # ============================================================
-def _partidos_recientes(df, team, fecha_ref=None, n=N_PARTIDOS, solo_oficiales=True):
-    """Últimos n partidos del equipo (perspectiva del equipo: gf, gc, rival…)."""
+# Peso por tipo de competencia: los amistosos cuentan, pero MENOS (plantillas
+# rotadas, baja intensidad). Clave para anfitriones (Mexico/USA/Canada) que no
+# juegan eliminatoria y cuya señal reciente son justamente los amistosos.
+def _peso_competencia(torneo):
+    t = str(torneo).lower()
+    if "friendly" in t:
+        return 0.55
+    if "qualification" in t:
+        return 0.90
+    return 1.0
+
+
+def _partidos_recientes(df, team, fecha_ref=None, n=N_PARTIDOS, solo_oficiales=False):
+    """Últimos n partidos del equipo (perspectiva del equipo: gf, gc, rival…).
+    Por defecto incluye amistosos (se ponderan a la baja en expectativa_equipo)."""
     m = df[(df["home_team"] == team) | (df["away_team"] == team)].copy()
     if solo_oficiales:
         m = m[m["tournament"].astype(str) != "Friendly"]
@@ -170,11 +183,13 @@ def expectativa_equipo(df, indices, team, fecha_ref=None, n=N_PARTIDOS):
     dias = np.clip(dias.values, 0, None)
     w_rec = 0.5 ** (dias / HALF_LIFE_DIAS)
     niv_rival = np.array([indices.get(r, 1.0) for r in p["rival"]])
-    w = w_rec  # peso base por recencia
+    w_comp = np.array([_peso_competencia(t) for t in p["torneo"]])
+    w = w_rec * w_comp  # recencia x tipo de competencia (amistosos pesan menos)
     sw = w.sum()
     ataque = float(np.sum(w * p["gf"].values * niv_rival) / sw)
     defensa = float(np.sum(w * p["gc"].values / niv_rival) / sw)
     detalle = p.assign(peso_recencia=np.round(w_rec, 3),
+                       peso_comp=np.round(w_comp, 2),
                        nivel_rival=np.round(niv_rival, 3))
     return {"ataque": np.clip(ataque, 0.15, 4.5),
             "defensa": np.clip(defensa, 0.15, 4.5),
