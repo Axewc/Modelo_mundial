@@ -9,6 +9,7 @@ Dixon-Coles) y simula el torneo con el **cuadro oficial FIFA 2026**.
 - `analisis_forma.py` — análisis de forma reciente / expectativa de goles.
 - `ingesta.py` — partidos del día, contraste modelo vs realidad, reentrenamiento.
 - `scrape_fifa_ranking.py` — descarga el ranking FIFA a `fifa_ranking.csv`.
+- `update_results.py` — sincroniza el dataset con el upstream (martj42).
 - `requirements.txt` — dependencias.
 - `results_actualizado_mundial_2026.csv` — datos (jugados + fixtures por jugar).
 - `MODELO_1_2.ipynb` — notebook original (misma lógica).
@@ -70,6 +71,19 @@ provider = "the_odds_api"
 Sin `api_key`, se pueden **ingresar las cuotas 1/X/2 a mano** (no requiere red
 ni clave). El blend con peso al mercado mejora la calibración pero hace que el
 modelo "siga" al mercado; úsalo según tu objetivo.
+
+### Mantener el dataset al día (rellenar resultados)
+El CSV proviene del dataset comunitario `martj42/international_results`. Para
+refrescarlo con todos los resultados nuevos sin perder los fixtures futuros
+del Mundial:
+```bash
+pip install requests pandas
+python update_results.py --dry-run   # muestra qué cambiaría
+python update_results.py             # actualiza el CSV → commit y push
+```
+Conserva las filas sin marcador (fixtures por jugar) y deja que el upstream
+corrija/agregue los partidos jugados. Para un partido suelto, también puedes
+usar la pestaña "Resultados del día" (manual o "Traer de ESPN").
 
 ### Ranking FIFA (ancla del análisis de forma)
 La pestaña de análisis de forma usa el ranking FIFA como ancla. Para

@@ -74,6 +74,14 @@ COMP_FUERTE = ["FIFA World Cup", "UEFA Euro", "Copa América",
 # ============================================================
 def load_data(path=CSV_DEFAULT, extra=None):
     df_raw = pd.read_csv(path)
+    # Canoniza nombres de seleccion (une grafias inconsistentes del propio
+    # dataset, p.ej. "Congo DR" y "DR Congo" -> una sola seleccion).
+    try:
+        import nombres
+        for col in ("home_team", "away_team"):
+            df_raw[col] = df_raw[col].map(nombres.normaliza)
+    except Exception:
+        pass
     if extra is not None and len(extra) > 0:
         ex = extra.copy()
         for c in df_raw.columns:

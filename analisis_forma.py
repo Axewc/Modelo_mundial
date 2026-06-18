@@ -90,10 +90,15 @@ def cargar_ranking_fifa(path=FIFA_CSV_DEFAULT):
     c_pts = cols.get("points") or cols.get("puntos") or cols.get("total_points")
     if c_team is None or c_pts is None:
         return None
+    try:
+        import nombres as _nombres
+        _norm_nombre = _nombres.normaliza
+    except Exception:
+        def _norm_nombre(x):
+            return NOMBRES_FIFA_A_CSV.get(str(x).strip(), str(x).strip())
     out = {}
     for _, row in r.iterrows():
-        nombre = str(row[c_team]).strip()
-        nombre = NOMBRES_FIFA_A_CSV.get(nombre, nombre)
+        nombre = _norm_nombre(str(row[c_team]).strip())
         try:
             pts = float(row[c_pts])
         except (ValueError, TypeError):

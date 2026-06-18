@@ -38,7 +38,11 @@ NOMBRES_EXT = {
 
 
 def normaliza_equipo(n):
-    return NOMBRES_EXT.get(str(n).strip(), str(n).strip())
+    try:
+        import nombres
+        return nombres.normaliza(n)
+    except Exception:
+        return NOMBRES_EXT.get(str(n).strip(), str(n).strip())
 
 
 def resultado_clase(home_score, away_score):
