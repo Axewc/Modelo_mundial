@@ -10,6 +10,7 @@ import modelo_core as mc
 import analisis_forma as af
 import ingesta as ing
 import odds as odds_mod
+import backtest as bt
 
 st.set_page_config(page_title="Mundial 2026 — Modelo", layout="wide",
                    page_icon="⚽", initial_sidebar_state="expanded")
@@ -154,9 +155,10 @@ st.title("Modelo predictivo — Copa del Mundo 2026")
 st.caption("ELO (8 años) · Dixon-Coles (ataque/defensa) · XGBoost calibrado · "
            "simulador con cuadro oficial FIFA.")
 
-tab1, tab2, tab5, tab6, tab3, tab4 = st.tabs(
+tab1, tab2, tab5, tab6, tab3, tab4, tab7 = st.tabs(
     ["🏆 Simulador del torneo", "🆚 Predecir partido", "🔬 Análisis de forma",
-     "📥 Resultados del día", "📊 Ranking ELO", "🧪 Evaluación"])
+     "📥 Resultados del día", "📊 Ranking ELO", "🧪 Evaluación",
+     "💹 Backtest vs mercado"])
 
 # ==========================================================
 # TAB 1: SIMULADOR
@@ -660,3 +662,92 @@ with tab4:
     else:
         st.info("Pulsa **▶ Calcular validación temporal** para ejecutar el "
                 "walk-forward (tarda unos segundos).")
+
+# ==========================================================
+# TAB 7: BACKTEST VS MERCADO
+# ==========================================================
+with tab7:
+    st.markdown("##### ¿Le gana el modelo al mercado?")
+    st.caption("Contrasta el Dixon-Coles (**point-in-time**, walk-forward: cada "
+               "partido se predice solo con datos anteriores) contra las "
+               "**cuotas de cierre** sobre los mismos partidos. Es el único "
+               "benchmark que de verdad importa para un ángulo de trading: si el "
+               "mercado gana, aún no hay edge propio. Como se apuesta *a la línea "
+               "de cierre*, un ROI>0 ya es una señal fuerte.")
+    st.caption("Necesitas un CSV de cuotas históricas con columnas: "
+               "`date, home_team, away_team, cuota_home, cuota_draw, cuota_away` "
+               "(decimales). Fuente típica para clubes: football-data.co.uk.")
+
+    up = st.file_uploader("CSV de cuotas (1X2 decimales)", type=["csv"], key="bt_odds")
+    cc = st.columns(4)
+    edge_min = cc[0].slider("Edge mínimo", 0.0, 0.15, 0.03, 0.01,
+                            help="Apuesta solo si el modelo da al menos esta "
+                                 "ventaja sobre el mercado.")
+    kelly = cc[1].slider("Fracción Kelly", 0.0, 1.0, 0.0, 0.1,
+                         help="0 = staking plano (1 unidad por apuesta).")
+    retrain = cc[2].select_slider("Reentrenar cada", [5, 10, 15, 30, 50], value=15,
+                                  help="Cada cuántos partidos se reentrena el "
+                                       "Dixon-Coles en el walk-forward.")
+    min_train = cc[3].number_input("Mín. partidos de entrenamiento", 100, 6000, 800, 100)
+
+    if up is not None and st.button("▶ Correr backtest", type="primary"):
+        try:
+            odds_df = pd.read_csv(up)
+            with st.spinner("Walk-forward + scoring…"):
+                bk = bt.construir_backtest(art, odds_df, retrain_every=int(retrain),
+                                           min_train=int(min_train))
+            st.session_state["bk"] = bk
+        except Exception as e:
+            st.error(f"Error en el backtest: {e}")
+
+    bk = st.session_state.get("bk")
+    if bk is not None:
+        n = bk["n"]
+        if n == 0:
+            st.warning("No se cruzó ningún partido jugado con cuotas. Revisa que "
+                       "los nombres de equipo y las fechas del CSV de cuotas casen "
+                       "con el dataset (mismo idioma/ortografía).")
+        else:
+            tab_cmp, winrate = bt.comparar_modelo_mercado(
+                bk["model_P"], bk["market_P"], bk["outcomes"])
+            rps_mod = float(tab_cmp.loc[tab_cmp["Quién"] == "Modelo", "RPS"].iloc[0])
+            rps_mkt = float(tab_cmp.loc[tab_cmp["Quién"] == "Mercado", "RPS"].iloc[0])
+
+            m = st.columns(3)
+            m[0].metric("Partidos con cuota", n)
+            m[1].metric("RPS modelo", f"{rps_mod:.4f}",
+                        delta=f"{rps_mod - rps_mkt:+.4f} vs mercado",
+                        delta_color="inverse")
+            m[2].metric("Modelo gana al mercado", f"{winrate*100:.0f}%",
+                        help="Partidos donde el RPS del modelo es mejor que el del mercado.")
+
+            st.info("✅ El modelo iguala o supera al mercado en RPS."
+                    if rps_mod <= rps_mkt else
+                    "⚠️ El mercado gana en RPS: aún no hay edge agregado claro "
+                    "(esto es lo normal; batir al mercado es difícil).")
+            st.dataframe(tab_cmp, hide_index=True, width="stretch",
+                         column_config={
+                             "RPS": st.column_config.NumberColumn(format="%.4f"),
+                             "LogLoss": st.column_config.NumberColumn(format="%.4f"),
+                             "Brier": st.column_config.NumberColumn(format="%.4f")})
+
+            st.markdown("##### Apuestas de valor (a cuotas de cierre)")
+            det, res = bt.value_bets(bk["model_P"], bk["market_P"], bk["odds"],
+                                     bk["outcomes"], edge_min=edge_min, kelly_frac=kelly)
+            r = st.columns(4)
+            r[0].metric("Apuestas", res["n_apuestas"])
+            r[1].metric("Acierto", f"{res['hit_rate']*100:.0f}%")
+            r[2].metric("ROI", f"{res['ROI']*100:+.1f}%",
+                        help="A cuotas de cierre. ROI>0 ya es señal fuerte de edge.")
+            r[3].metric("P&L (unidades)", f"{res['profit']:+.2f}")
+
+            if n < 100:
+                st.warning(f"Solo {n} partidos cruzados: muestra pequeña, alta "
+                           "incertidumbre. Úsalo como indicio, no como conclusión. "
+                           "Para concluir necesitas cientos/miles de partidos con cuota.")
+            if not det.empty:
+                with st.expander("Ver apuestas"):
+                    st.dataframe(det.drop(columns=["i"]), hide_index=True, width="stretch")
+    else:
+        st.info("Sube un CSV de cuotas y pulsa **▶ Correr backtest**. "
+                "Sin cuotas históricas no se puede medir el edge real del modelo.")
