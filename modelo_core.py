@@ -685,6 +685,58 @@ def run_pipeline(path=CSV_DEFAULT, extra=None):
 
 
 # ============================================================
+# 5b) ¿"Analisis de forma" vs el resto? (decidir por RPS, no por autoridad)
+# ============================================================
+def evaluar_forma(art, ranking=None, test_frac=0.20, max_eval=None):
+    """Evalua el modelo de 'Analisis de forma' (analisis_forma.py) en el MISMO
+    set de test que el resto, POINT-IN-TIME: para cada partido, solo usa datos
+    anteriores. Devuelve la fila de metricas (RPS/LogLoss/Brier/Accuracy) para
+    poder compararlo directamente con Dixon-Coles / XGBoost.
+
+    NOTA: el ranking FIFA y el ELO que recibe la forma son los ACTUALES (no se
+    recalculan hacia atras), un leak menor que, si acaso, FAVORECE a la forma.
+    Es decir, si Dixon-Coles aun le gana, la conclusion es conservadora.
+    """
+    import analisis_forma as af
+
+    df = art["df"].reset_index(drop=True)
+    elo = art["elo"]
+    n = len(df)
+    split = int(n * (1 - test_frac))
+    idxs = list(range(split, n))
+    if max_eval:
+        idxs = idxs[-int(max_eval):]
+
+    P, y = [], []
+    for pos in idxs:
+        row = df.iloc[pos]
+        if pd.isna(row["home_score"]) or pd.isna(row["away_score"]):
+            continue
+        df_upto = df.iloc[:pos]
+        if len(df_upto) < 50:
+            continue
+        try:
+            r = af.predecir_partido_forma(
+                df_upto, elo, ranking, row["home_team"], row["away_team"],
+                bool(row["neutral_match"]))
+        except Exception:
+            continue
+        pr = r["prob"]
+        P.append([pr["visitante"], pr["empate"], pr["local"]])  # [away,draw,home]
+        if row["home_score"] > row["away_score"]:
+            y.append(2)
+        elif row["home_score"] < row["away_score"]:
+            y.append(0)
+        else:
+            y.append(1)
+
+    if not P:
+        return None
+    return {**_evaluar("Analisis de forma", np.array(y), np.array(P)),
+            "n_test": len(y)}
+
+
+# ============================================================
 # 6) PREDECIR UN PARTIDO (todos los metodos)
 # ============================================================
 def _features_partido(art, local, visitante, neutral_match, peso_torneo):

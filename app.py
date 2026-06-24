@@ -48,6 +48,12 @@ def validacion_temporal(_art, data_sig):
     return mc.temporal_validation(_art["df"], _art["dm"])
 
 
+@st.cache_data(show_spinner="Evaluando 'Análisis de forma' (point-in-time)…")
+def evaluar_forma_cached(_art, _ranking, data_sig, rsig):
+    # _art y _ranking no se hashean; la clave es (data_sig, rsig)
+    return mc.evaluar_forma(_art, ranking=_ranking)
+
+
 # ---- helpers de formato ----
 def pct_col(label, help=None):
     return st.column_config.ProgressColumn(label, format="%.1f%%",
@@ -632,6 +638,45 @@ with tab4:
                     "RPS": "{:.4f}", "Accuracy": "{:.3f}"}))
     st.dataframe(sty, width="stretch", hide_index=True)
     st.caption("El **mejor** valor de cada columna aparece resaltado en verde.")
+
+    st.divider()
+    st.markdown("##### ¿'Análisis de forma' le gana a Dixon-Coles?")
+    st.caption("Mete el modelo de la pestaña 🔬 en el **mismo** test (point-in-time) "
+               "para que decidan los datos, no la autoridad. El consenso "
+               "(Dixon-Coles, 1997 + literatura) favorece el modelo ajustado por "
+               "verosimilitud; aquí se confirma —o no— en TUS datos. "
+               "_Cómputo bajo demanda (~1-2 min)._")
+    if st.button("▶ Evaluar 'Análisis de forma'"):
+        rk = cargar_ranking_fifa(data_sig)
+        rsig = f"fifa{len(rk) if rk else 0}"
+        st.session_state["forma_eval"] = evaluar_forma_cached(art, rk, data_sig, rsig)
+
+    fe = st.session_state.get("forma_eval")
+    if fe is not None:
+        cols = ["Modelo", "LogLoss", "Brier", "RPS", "Accuracy"]
+        comp = (pd.concat([art["tabla_eval"][cols],
+                           pd.DataFrame([{k: fe[k] for k in cols}])],
+                          ignore_index=True)
+                .sort_values("RPS").reset_index(drop=True))
+        styc = (comp.style
+                .highlight_min(subset=["LogLoss", "Brier", "RPS"], color="#1b5e20")
+                .highlight_max(subset=["Accuracy"], color="#1b5e20")
+                .format({"LogLoss": "{:.4f}", "Brier": "{:.4f}",
+                         "RPS": "{:.4f}", "Accuracy": "{:.3f}"}))
+        st.dataframe(styc, width="stretch", hide_index=True)
+
+        msk = art["tabla_eval"]["Modelo"] == "Dixon-Coles"
+        if msk.any():
+            dc_rps = float(art["tabla_eval"].loc[msk, "RPS"].iloc[0])
+            f_rps = float(fe["RPS"])
+            st.info((f"✅ 'Análisis de forma' (RPS {f_rps:.4f}) **mejora** a "
+                     f"Dixon-Coles (RPS {dc_rps:.4f}) en tus datos."
+                     if f_rps < dc_rps else
+                     f"⚠️ Dixon-Coles (RPS {dc_rps:.4f}) **le gana** a 'Análisis de "
+                     f"forma' (RPS {f_rps:.4f}), en línea con el consenso.")
+                    + f"  · {fe.get('n_test', '?')} partidos de test.")
+        st.caption("La forma recibe ranking FIFA y ELO **actuales** (leak menor que "
+                   "la favorece); si aun así pierde, la conclusión es robusta.")
 
     st.divider()
     st.markdown("##### Validación temporal (walk-forward)")
