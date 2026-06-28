@@ -321,6 +321,25 @@ with tab2:
             st.caption("💡 Valor del modelo (donde ve más probabilidad que el mercado): "
                        + (", ".join(val) if val else "ninguno destacado."))
 
+        # ---- Eliminatoria: quién avanza (prórroga + penales) ----
+        st.divider()
+        ko = st.checkbox("🏆 Eliminatoria (a un partido): ¿quién avanza?")
+        if ko:
+            lh, la = art["dc_full"]["lambdas"](local, visitante, bool(neutral))
+            fav = st.checkbox("Ligera ventaja al favorito en penales (si no, 50/50)")
+            shoot = 0.5
+            if fav and (lh + la) > 0:
+                shoot = float(np.clip(0.5 + 0.25 * (lh - la) / (lh + la), 0.35, 0.65))
+            av = mc.prob_avance(ens, lh, la, shootout=shoot)
+            cA, cB = st.columns(2)
+            cA.metric(f"🏆 Avanza {local}", f"{av[1]*100:.1f}%")
+            cB.metric(f"🏆 Avanza {visitante}", f"{av[0]*100:.1f}%")
+            st.caption(
+                f"El empate de los 90' ({ens[1]*100:.0f}%) se resuelve con "
+                f"**prórroga** (goles esperados ×1/3) y, si persiste, **penales** "
+                f"({'ventaja '+str(round(shoot*100))+'% al local' if fav else '50/50'}). "
+                "Es el mismo criterio que usa el simulador del torneo.")
+
 # ==========================================================
 # TAB 5: ANÁLISIS DE FORMA
 # ==========================================================
