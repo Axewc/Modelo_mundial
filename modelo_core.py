@@ -16,6 +16,7 @@ XGBoost es OPCIONAL: si no esta instalado, la app sigue funcionando con
 los demas metodos.
 """
 
+import os
 import collections
 import numpy as np
 import pandas as pd
@@ -50,6 +51,9 @@ def _calibrar(modelo, X_val, y_val):
         return cal
 
 CSV_DEFAULT = "results_actualizado_mundial_2026.csv"
+# Estructura OFICIAL FIFA 2026 (grupos + cuadro) provista como datasets.
+MATCHES_CSV_DEFAULT = "matches.csv"
+TEAMS_CSV_DEFAULT = "teams.csv"
 ANIO_INICIO = 2018
 RANDOM_STATE = 42
 CLASSES = [0, 1, 2]  # 0=gana visitante, 1=empate, 2=gana local
@@ -805,38 +809,135 @@ def predict_match(art, local, visitante, neutral_match, peso_torneo):
 # ============================================================
 # 7) SIMULADOR DEL TORNEO
 # ============================================================
+GRUPO_TAM = 4  # Mundial 2026: 12 grupos de 4 selecciones
+
+
+def cargar_estructura_oficial(matches_path=MATCHES_CSV_DEFAULT,
+                              teams_path=TEAMS_CSV_DEFAULT):
+    """Lee la estructura OFICIAL FIFA 2026 de `teams.csv` + `matches.csv`.
+
+    Devuelve un dict con:
+      - `grupo_de`: {nombre_canónico: letra_grupo} para las 42 selecciones
+        reales (los 6 placeholders de repesca se resuelven luego por el grafo).
+      - `r32`: {match_number: (tok1, tok2)} con tokens '1E' (1º de E),
+        '2C' (2º de C) o '3ABCDF' (mejor 3º de uno de esos grupos).
+      - `third_elig`: {match_number: set('ABCDF')} para los 8 slots de terceros.
+
+    Devuelve None si falta algún archivo o el formato no cuadra (la app cae
+    entonces al cuadro cableado heredado)."""
+    if not (os.path.exists(matches_path) and os.path.exists(teams_path)):
+        return None
+    try:
+        import nombres as _nombres
+        tm = pd.read_csv(teams_path)
+        mt = pd.read_csv(matches_path)
+        grupo_de = {_nombres.normaliza(str(r["team_name"])): str(r["group_letter"])
+                    for _, r in tm.iterrows()
+                    if not bool(r["is_placeholder"])}
+        r32, third_elig = {}, {}
+        for _, r in mt[mt["stage_id"] == 2].iterrows():
+            lab = str(r["match_label"])
+            t1, t2 = (s.strip() for s in lab.split(" vs "))
+            mnum = int(r["match_number"])
+            r32[mnum] = (t1, t2)
+            for tok in (t1, t2):
+                if tok[:1] == "3":
+                    third_elig[mnum] = set(tok[1:])
+        if len(r32) != 16 or len(third_elig) != 8:
+            return None
+        return {"grupo_de": grupo_de, "r32": r32, "third_elig": third_elig}
+    except Exception:
+        return None
+
+
+def _reetiquetar_oficial(groups, grupo_de):
+    """Cambia las etiquetas alfabéticas por las letras OFICIALES de cada grupo,
+    deducidas de sus miembros reales (los placeholders heredan la del grupo).
+    Si algo no cuadra (letra ausente o repetida), conserva las etiquetas
+    alfabéticas para no romper el cuadro."""
+    try:
+        import nombres as _nombres
+    except Exception:
+        return groups
+    nuevo = {}
+    for ts in groups.values():
+        votos = collections.Counter(grupo_de.get(_nombres.normaliza(t)) for t in ts)
+        votos.pop(None, None)
+        letra = votos.most_common(1)[0][0] if votos else None
+        if letra is None or letra in nuevo:
+            return groups
+        nuevo[letra] = ts
+    return {g: nuevo[g] for g in sorted(nuevo)}
+
+
 def reconstruir_grupos(art):
+    """Reconstruye los 12 grupos a partir del calendario del Mundial.
+
+    La fase de grupos es un round-robin dentro de cada grupo de 4; los partidos
+    de ELIMINATORIA cruzan grupos. Si esas aristas se incluyeran (como hacía la
+    versión por componentes conexas), al empezar los dieciseisavos los 12 grupos
+    se fundirían en pocos bloques gigantes y el cuadro (`_R32`) lanzaría
+    `KeyError`. Para evitarlo usamos union-find en orden cronológico (los
+    partidos de grupo preceden a los de eliminatoria) y RECHAZAMOS cualquier
+    arista que haría crecer un grupo por encima de `GRUPO_TAM`: justamente los
+    cruces de eliminatoria. Devuelve además SOLO los fixtures intra-grupo, para
+    que la tabla de cada grupo no mezcle partidos de eliminatoria."""
     df, por_jugar = art["df"], art["por_jugar"]
     wc_j = df[(df["tournament"] == "FIFA World Cup") & (df["date"] >= "2026-01-01")]
     wc = pd.concat([wc_j, por_jugar], ignore_index=True)
-    adj = collections.defaultdict(set)
-    for _, r in wc.iterrows():
-        adj[r["home_team"]].add(r["away_team"]); adj[r["away_team"]].add(r["home_team"])
     teams = sorted(pd.unique(pd.concat([wc["home_team"], wc["away_team"]])))
-    seen, groups, gid = set(), {}, 0
-    for t in teams:
-        if t in seen:
+
+    parent = {t: t for t in teams}
+    size = {t: 1 for t in teams}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]  # compresión de caminos
+            x = parent[x]
+        return x
+
+    for _, r in wc.sort_values("date").iterrows():
+        ra, rb = find(r["home_team"]), find(r["away_team"])
+        if ra == rb:
             continue
-        stack, comp = [t], set()
-        while stack:
-            x = stack.pop()
-            if x in seen:
-                continue
-            seen.add(x); comp.add(x); stack.extend(adj[x] - seen)
-        groups[chr(65 + gid)] = sorted(comp); gid += 1
+        if size[ra] + size[rb] > GRUPO_TAM:
+            continue  # cruza grupos (eliminatoria) -> no une
+        if size[ra] < size[rb]:
+            ra, rb = rb, ra
+        parent[rb] = ra
+        size[ra] += size[rb]
+
+    comps = collections.defaultdict(list)
+    for t in teams:
+        comps[find(t)].append(t)
+    # Etiqueta A, B, C… de forma estable (por el equipo alfabéticamente menor).
+    groups = {chr(65 + i): sorted(comps[root])
+              for i, root in enumerate(sorted(comps, key=lambda r: min(comps[r])))}
+    # Si hay estructura oficial, reemplaza por las letras de grupo reales (FIFA).
+    est = cargar_estructura_oficial()
+    if est:
+        groups = _reetiquetar_oficial(groups, est["grupo_de"])
+    t2g = {t: g for g, ts in groups.items() for t in ts}
+
     fixtures = []
     for _, r in wc.iterrows():
+        h, a = r["home_team"], r["away_team"]
+        if t2g.get(h) != t2g.get(a):
+            continue  # solo partidos de fase de grupos (intra-grupo)
         gh = None if pd.isna(r["home_score"]) else int(r["home_score"])
         ga = None if pd.isna(r["away_score"]) else int(r["away_score"])
-        fixtures.append((r["home_team"], r["away_team"], bool(r["neutral"]), gh, ga))
+        fixtures.append((h, a, bool(r["neutral"]), gh, ga))
     return groups, fixtures, teams
 
 
 # ----------------------------------------------------------
-# BRACKET OFICIAL FIFA Mundial 2026 (partidos 73-104)
-# Fuente: estructura oficial del cuadro de eliminatorias.
-# Cada partido R32 enfrenta ganador/subcampeon de grupo, y los 8
-# mejores terceros ocupan los slots "3RD" segun la tabla de elegibilidad.
+# BRACKET — Mundial 2026 (partidos 73-104)
+# El R32 (qué grupo va a cada slot, y la elegibilidad de los terceros) se TOMA
+# del dataset oficial `matches.csv` vía cargar_estructura_oficial(). Lo de abajo
+# es el FALLBACK heredado por si esos archivos no están: ¡ojo! este cableado no
+# coincide con el cuadro oficial 2026 (estaba descuadrado), por eso se prefiere
+# siempre la estructura oficial. El árbol R16→Final sí es estable y se reutiliza
+# en ambos casos (las llaves 73-88 coinciden con los match_number oficiales).
 # ----------------------------------------------------------
 _R32 = {
     73: ("RU_A", "RU_B"), 74: ("W_E", "3RD"), 75: ("W_F", "RU_C"),
@@ -860,14 +961,30 @@ _FINAL = (101, 102)
 _STAGE = {"GROUP": 0, "R32": 1, "R16": 2, "QF": 3, "SF": 4, "FINAL": 5, "CHAMP": 6}
 
 
-def _match_thirds(qual_groups):
+def _r32_a_tokens(est):
+    """Devuelve (r32, third_elig) en tokens oficiales ('1E','2C','3ABCDF').
+    Usa la estructura oficial si está; si no, convierte el cuadro heredado."""
+    if est:
+        return est["r32"], est["third_elig"]
+
+    def conv(tok, mnum):
+        if tok == "3RD":
+            return "3" + "".join(sorted(_THIRD_ELIG[mnum]))
+        kind, g = tok.split("_")
+        return ("1" if kind == "W" else "2") + g
+
+    r32 = {m: (conv(a, m), conv(b, m)) for m, (a, b) in _R32.items()}
+    return r32, {m: set(v) for m, v in _THIRD_ELIG.items()}
+
+
+def _match_thirds(qual_groups, third_elig):
     """Asigna los 8 grupos con tercero clasificado a los 8 slots '3RD'
     respetando la elegibilidad (emparejamiento bipartito, algoritmo de Kuhn).
-    Verificado: existe emparejamiento perfecto para las 495 combinaciones."""
+    `third_elig`: {match_number: set(grupos_elegibles)}."""
     matchR = {}  # grupo -> slot
 
     def assign(slot, seen):
-        for g in _THIRD_ELIG[slot]:
+        for g in third_elig[slot]:
             if g in qual_groups and g not in seen:
                 seen.add(g)
                 if g not in matchR or assign(matchR[g], seen):
@@ -875,11 +992,11 @@ def _match_thirds(qual_groups):
                     return True
         return False
 
-    for s in _THIRD_ELIG:
+    for s in third_elig:
         assign(s, set())
     slot2group = {s: g for g, s in matchR.items()}
     # fallback defensivo (no deberia ocurrir)
-    libres_s = [s for s in _THIRD_ELIG if s not in slot2group]
+    libres_s = [s for s in third_elig if s not in slot2group]
     libres_g = [g for g in qual_groups if g not in matchR]
     for s, g in zip(libres_s, libres_g):
         slot2group[s] = g
@@ -890,6 +1007,8 @@ def simulate_tournament(art, n_sim=10000, seed=RANDOM_STATE):
     rng = np.random.default_rng(seed)
     groups, fixtures, teams = reconstruir_grupos(art)
     team2group = {t: g for g, ts in groups.items() for t in ts}
+    # Cuadro de eliminatoria: oficial (matches.csv) o, si no está, el heredado.
+    r32, third_elig = _r32_a_tokens(cargar_estructura_oficial())
     lambdas = art["dc_full"]["lambdas"]
 
     def sim_score(h, a, neu):
@@ -934,17 +1053,19 @@ def simulate_tournament(art, n_sim=10000, seed=RANDOM_STATE):
             thirds.append((g, o[2][0], o[2][1], o[2][2], o[2][3], o[2][4]))
         thirds.sort(key=lambda x: (-x[2], -x[3], -x[4], x[5]))
         third_team = {x[0]: x[1] for x in thirds[:8]}
-        slot2group = _match_thirds(set(third_team))
+        slot2group = _match_thirds(set(third_team), third_elig)
 
         def team_of(tok, mnum):
-            if tok == "3RD":
-                return third_team[slot2group[mnum]]
-            kind, g = tok.split("_")
-            return W[g] if kind == "W" else RU[g]
+            pos, g = tok[0], tok[1:]
+            if pos == "1":
+                return W[g]
+            if pos == "2":
+                return RU[g]
+            return third_team[slot2group[mnum]]  # pos == "3"
 
         reached = {t: 0 for t in teams}
         win = {}
-        for mnum, (t1, t2) in _R32.items():
+        for mnum, (t1, t2) in r32.items():
             a1, a2 = team_of(t1, mnum), team_of(t2, mnum)
             reached[a1] = max(reached[a1], _STAGE["R32"])
             reached[a2] = max(reached[a2], _STAGE["R32"])
