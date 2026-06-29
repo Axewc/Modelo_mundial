@@ -196,6 +196,31 @@ def expectativa_equipo(df, indices, team, fecha_ref=None, n=N_PARTIDOS):
             "n": int(len(p)), "detalle": detalle}
 
 
+def goles_recientes(df, team, n=N_PARTIDOS):
+    """Tabla limpia de los goles de los últimos `n` partidos JUGADOS del equipo,
+    lista para mostrar en la app: fecha, rival, sede, goles a favor (GF), en
+    contra (GC) y resultado (V/E/D), con el más reciente arriba.
+
+    Comparte la fuente (`_partidos_recientes`) con la 'forma reciente', de modo
+    que ambas pestañas predictivas leen exactamente los mismos partidos."""
+    cols = ["Fecha", "Rival", "Sede", "GF", "GC", "Resultado"]
+    p = _partidos_recientes(df, team, n=n)
+    if len(p) == 0:
+        return pd.DataFrame(columns=cols)
+    p = p.sort_values("date", ascending=False).reset_index(drop=True)
+    gf = p["gf"].astype(float).round().astype(int)
+    gc = p["gc"].astype(float).round().astype(int)
+    res = np.where(gf > gc, "V", np.where(gf < gc, "D", "E"))
+    return pd.DataFrame({
+        "Fecha": pd.to_datetime(p["date"]).dt.strftime("%d/%m/%y"),
+        "Rival": p["rival"].values,
+        "Sede": np.where(p["local"].values == 1, "Local", "Visita"),
+        "GF": gf.values,
+        "GC": gc.values,
+        "Resultado": res,
+    })[cols]
+
+
 # ============================================================
 # Historial directo (H2H)
 # ============================================================

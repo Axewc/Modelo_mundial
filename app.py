@@ -107,6 +107,30 @@ def _peso_torneo(torneo):
     return 1.0
 
 
+def mostrar_goles_recientes(df, local, visitante, n=8):
+    """Componente compartido por las dos pestañas predictivas: muestra, lado a
+    lado, los goles de los últimos partidos de cada selección. Misma fuente y
+    mismo formato en 'Predecir partido' y 'Análisis de forma'."""
+    st.markdown("##### ⚽ Goles recientes")
+    st.caption(f"Últimos {n} partidos oficiales jugados (el más reciente arriba). "
+               "GF = goles a favor · GC = goles en contra · forma = últimos 5 (V/E/D).")
+    cols = st.columns(2)
+    for col, team in zip(cols, (local, visitante)):
+        with col:
+            t = af.goles_recientes(df, team, n=n)
+            if t.empty:
+                st.info(f"Sin partidos recientes para **{team}**.")
+                continue
+            gf, gc = int(t["GF"].sum()), int(t["GC"].sum())
+            forma = " ".join(t["Resultado"].head(5).tolist())
+            st.markdown(f"**{team}** — {gf} GF / {gc} GC · forma: `{forma}`")
+            st.dataframe(t, width="stretch", hide_index=True,
+                         column_config={
+                             "GF": st.column_config.NumberColumn(format="%d"),
+                             "GC": st.column_config.NumberColumn(format="%d"),
+                         })
+
+
 def tabla_metodos(metodos, local, visitante):
     filas = [{"Método": m,
               f"Gana {local}": round(p[2] * 100, 1),
@@ -248,6 +272,10 @@ with tab2:
         if gdc:
             st.caption(f"Goles esperados (Dixon-Coles): **{local} {gdc[0]} – {gdc[1]} {visitante}**")
 
+        st.divider()
+        mostrar_goles_recientes(art["df"], local, visitante, n=8)
+
+        st.divider()
         st.markdown("##### Comparativa por método")
         st.dataframe(
             tabla_metodos(r["metodos"], local, visitante),
@@ -391,6 +419,9 @@ with tab5:
             ]), width="stretch", hide_index=True)
             st.caption("Ataque: goles esperados que marca · Defensa: goles que "
                        "recibe, ya ajustados por el nivel de los rivales.")
+
+        st.divider()
+        mostrar_goles_recientes(dff, loc, vis, n=nmatches)
 
         st.divider()
         mostrar_mercados(r["mercados"], r["top_resultado"], loc, vis)
