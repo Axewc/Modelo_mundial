@@ -359,6 +359,32 @@ def poisson_result_probs(lh, la, max_goals=10):
     return np.array([p_away / s, p_draw / s, p_home / s])
 
 
+def prob_avance(p1x2, lh, la, shootout=0.5, prorroga=True, max_goals=8):
+    """Eliminatoria a partido único: convierte el 1X2 [away, draw, home] en
+    P(avanza). El empate de los 90' se rompe con PRÓRROGA (mini-Poisson a 1/3
+    de los goles esperados) y, si persiste, PENALES.
+      shootout = prob de que el LOCAL gane la tanda (0.5 = lotería).
+    Devuelve [avanza_away, avanza_home] (mismo orden que el 1X2)."""
+    p_away, p_draw, p_home = (float(x) for x in p1x2)
+    if prorroga and lh > 0 and la > 0:
+        kh = poisson.pmf(np.arange(max_goals + 1), lh / 3.0)
+        ka = poisson.pmf(np.arange(max_goals + 1), la / 3.0)
+        M = np.outer(kh, ka)
+        et_h = float(np.tril(M, -1).sum())
+        et_d = float(np.trace(M))
+        et_a = float(np.triu(M, 1).sum())
+        s = et_h + et_d + et_a
+        et_h, et_d, et_a = et_h / s, et_d / s, et_a / s
+        local_si_empate = et_h + et_d * shootout       # gana prórroga o penales
+        visit_si_empate = et_a + et_d * (1 - shootout)
+    else:
+        local_si_empate, visit_si_empate = shootout, 1 - shootout
+    av_home = p_home + p_draw * local_si_empate
+    av_away = p_away + p_draw * visit_si_empate
+    t = av_home + av_away
+    return np.array([av_away / t, av_home / t])
+
+
 # ============================================================
 # 4c) BINOMIAL NEGATIVA (cola más gruesa que Poisson)
 # ============================================================
