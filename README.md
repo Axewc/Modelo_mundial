@@ -3,16 +3,83 @@
 App de Streamlit que ejecuta el pipeline completo (ELO, Poisson, XGBoost,
 Dixon-Coles) y simula el torneo con el **cuadro oficial FIFA 2026**.
 
+> *(English)* Probabilistic forecasting system for the FIFA World Cup:
+> ELO + Dixon-Coles + calibrated gradient boosting, Monte Carlo tournament
+> simulation, and a live Streamlit app. Validated with point-in-time
+> backtests on the 2018 and 2022 World Cups (details below).
+
+## 📊 Resultados — backtest point-in-time en Mundiales
+
+¿Cómo le habría ido a **este mismo modelo** prediciendo Mundiales pasados,
+sin mirar el futuro? Protocolo: para cada torneo, el modelo se entrena solo
+con partidos **anteriores al partido inaugural** (misma receta que producción,
+ventana desplazada) y los ratings quedan **congelados** al inicio. Métrica
+principal: **RPS** (Ranked Probability Score, menor = mejor — el estándar
+para pronósticos 1X2).
+
+| Modelo | Rusia 2018 | Qatar 2022 | 2026 (en curso)\* |
+|---|---|---|---|
+| **Ensemble (DC+ELO)** | **0.2201** | **0.2186** | 0.1830 |
+| ELO logístico | 0.2227 | 0.2191 | **0.1813** |
+| Dixon-Coles | 0.2274 | 0.2311 | 0.2029 |
+| Baseline frecuencias | 0.2506 | 0.2349 | 0.2191 |
+| Baseline uniforme (⅓,⅓,⅓) | 0.2439 | 0.2387 | 0.2346 |
+
+\* 85 partidos jugados al momento del corte. Tablas completas (LogLoss,
+Brier, Accuracy) en [`docs/backtest_mundiales.md`](docs/backtest_mundiales.md);
+todo se regenera con `python backtest_mundiales.py`.
+
+**Lectura:** el ensemble bate a los dos baselines sin información en los
+tres torneos, de forma consistente. El marcador incluye prórroga pero no
+penales (convención del dataset), así que "empate" en eliminatorias
+significa definición por tanda.
+
+### Calibración
+
+Diagrama de fiabilidad del modelo de goles con **7,328 predicciones
+point-in-time** (walk-forward 2019–hoy, reentrenando con ventana móvil de
+8 años y regularización elegida por validación en cada refit). Sobre esa
+muestra: RPS **0.197** vs 0.240 del baseline uniforme.
+
+![Calibración del modelo](docs/img/calibracion.png)
+
+**Lectura:** los empates están bien calibrados; en victorias el modelo es
+**conservador** — cuando asigna >60% la frecuencia real es mayor (las
+probabilidades quedan comprimidas hacia el centro). Es consistente con el
+hallazgo del grid de regularización (abajo) y marca la dirección de la
+siguiente mejora.
+
+### Limitaciones y hallazgos (documentados a propósito)
+
+- **Probé binomial negativa** para engordar la cola de goleadas: la
+  validación eligió dispersión ≈ Poisson y quedó marginalmente peor que
+  Dixon-Coles — los goles internacionales son esencialmente equidispersos.
+  Se conserva como fila comparativa en la app, no como modelo.
+- **Los empates casi no mueven el ELO** por el factor de margen
+  `log(dif_goles+1)`: limitación conocida del diseño actual.
+- **El grid de regularización del DC se queda corto**: en validación,
+  `alpha` por debajo del mínimo del grid actual (0.01) sigue mejorando el
+  RPS — primer candidato de mejora del modelo.
+- **La comparación contra el mercado** (cuotas de cierre) está implementada
+  en `backtest.py` (RPS modelo vs mercado, value betting con Kelly), a la
+  espera de un histórico de cuotas para los Mundiales pasados.
+
 ## Archivos
-- `app.py` — interfaz Streamlit (6 pestañas).
+- `app.py` — interfaz Streamlit (6 pestañas) + `pages/` (editor del Mundial).
 - `modelo_core.py` — todo el modelo (ingesta, ELO, Dixon-Coles, simulador).
 - `analisis_forma.py` — análisis de forma reciente / expectativa de goles.
 - `ingesta.py` — partidos del día, contraste modelo vs realidad, reentrenamiento.
+- `backtest_mundiales.py` — **backtest point-in-time de Mundiales** + calibración.
+- `backtest.py` — modelo vs mercado (RPS/CLV/value betting con Kelly).
+- `odds.py` — cuotas de casas (implícita sin margen, blend con el modelo).
+- `nombres.py` — normalización robusta de nombres de selección.
+- `gh_commit.py` — persistencia: commit del CSV a GitHub desde la app.
 - `scrape_fifa_ranking.py` — descarga el ranking FIFA a `fifa_ranking.csv`.
 - `update_results.py` — sincroniza el dataset con el upstream (martj42).
 - `requirements.txt` — dependencias.
 - `results_actualizado_mundial_2026.csv` — datos (jugados + fixtures por jugar).
 - `MODELO_1_2.ipynb` — notebook original (misma lógica).
+- `docs/` — resultados del backtest y figuras (regenerables por script).
 
 ## Ejecutar en local
 ```bash

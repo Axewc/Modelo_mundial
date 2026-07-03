@@ -114,7 +114,12 @@ def load_data(path=CSV_DEFAULT, extra=None):
 # ============================================================
 # 2) ELO V3 (historia completa)
 # ============================================================
-def compute_elo(df_full):
+def compute_elo(df_full, anio_inicio=None):
+    """anio_inicio: año desde el que se recorta el frame devuelto (default:
+    ANIO_INICIO). Permite evaluaciones point-in-time (p.ej. backtest de
+    Mundiales pasados) usando la MISMA receta con la ventana desplazada."""
+    if anio_inicio is None:
+        anio_inicio = ANIO_INICIO
     d = df_full.copy()
     d["neutral"] = d["neutral"].astype(str).str.lower()
     d["neutral_match"] = d["neutral"].isin(["true", "1"]).astype(int)
@@ -167,7 +172,7 @@ def compute_elo(df_full):
     d["elo_away"] = elo_away
     d["elo_diff"] = d["elo_home"] - d["elo_away"]
 
-    df = d[d["date"] >= f"{ANIO_INICIO}-01-01"].reset_index(drop=True).copy()
+    df = d[d["date"] >= f"{anio_inicio}-01-01"].reset_index(drop=True).copy()
     return df, elo
 
 
