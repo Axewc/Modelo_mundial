@@ -50,7 +50,9 @@ def _calibrar(modelo, X_val, y_val):
         cal.fit(X_val, y_val)
         return cal
 
-CSV_DEFAULT = "results_actualizado_mundial_2026.csv"
+from pathlib import Path as _Path
+_RAIZ = _Path(__file__).resolve().parents[1]
+CSV_DEFAULT = str(_RAIZ / "results_actualizado_mundial_2026.csv")
 # Estructura OFICIAL FIFA 2026 (grupos + cuadro) provista como datasets.
 MATCHES_CSV_DEFAULT = "matches.csv"
 TEAMS_CSV_DEFAULT = "teams.csv"
@@ -81,7 +83,7 @@ def load_data(path=CSV_DEFAULT, extra=None):
     # Canoniza nombres de seleccion (une grafias inconsistentes del propio
     # dataset, p.ej. "Congo DR" y "DR Congo" -> una sola seleccion).
     try:
-        import nombres
+        from mundial import nombres
         for col in ("home_team", "away_team"):
             df_raw[col] = df_raw[col].map(nombres.normaliza)
     except Exception:
@@ -469,10 +471,16 @@ def _dc_deviance(pred, d):
             + _poisson_deviance(d["away_score"].values, la))
 
 
-def select_alpha_dc(d_tr, d_val, alphas=(0.01, 0.05, 0.15, 0.5)):
+def select_alpha_dc(d_tr, d_val, alphas=(0.0003, 0.001, 0.003, 0.01, 0.05, 0.5)):
     """Elige la regularizacion del modelo de goles minimizando la deviance
-    de Poisson sobre un periodo de validacion (en vez de fijarla a ojo)."""
-    best_a, best_dev = 0.05, np.inf
+    de Poisson sobre un periodo de validacion (en vez de fijarla a ojo).
+
+    Grid extendido hacia abajo tras validarlo en 5 cortes temporales
+    (2021-2025): alpha<=0.001 gano unanimemente por deviance Y por RPS
+    (RPS out-of-sample ~0.175 vs ~0.20 del grid anterior, que se quedaba
+    corto en 0.01). El piso 0.0003 conserva algo de regularizacion para
+    estabilidad; bajar mas solo anade ~0.003 de RPS."""
+    best_a, best_dev = 0.01, np.inf
     for a in alphas:
         try:
             pred = fit_dc(d_tr, alpha=a)
@@ -568,7 +576,6 @@ def temporal_validation(df, dm, n_folds=5, min_train_frac=0.5, include_xgb=True)
     if folds.empty:
         return {"folds": folds, "resumen": pd.DataFrame()}
 
-    met = ["LogLoss", "Brier", "RPS", "Accuracy"]
     g = folds.groupby("Modelo")
     resumen = pd.DataFrame({
         "Modelo": list(g.groups.keys()),

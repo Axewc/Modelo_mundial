@@ -36,7 +36,8 @@ RHO_BAJOS = -0.06        # corrección Dixon-Coles (negativo realza empates/bajo
 GAMMA_LOCAL = 1.10       # ventaja del local (multiplica su λ si no es neutral)
 MU_LIGA = 1.35           # goles medios de referencia por equipo y partido
 MAX_GOLES = 8
-FIFA_CSV_DEFAULT = "fifa_ranking.csv"
+from pathlib import Path as _Path
+FIFA_CSV_DEFAULT = str(_Path(__file__).resolve().parents[1] / "fifa_ranking.csv")
 
 # Mapa de nombres del ranking FIFA/Wikipedia -> nombres del CSV de resultados.
 # Solo hace falta para los que difieren; el resto casa por nombre idéntico.
@@ -91,7 +92,7 @@ def cargar_ranking_fifa(path=FIFA_CSV_DEFAULT):
     if c_team is None or c_pts is None:
         return None
     try:
-        import nombres as _nombres
+        from mundial import nombres as _nombres
         _norm_nombre = _nombres.normaliza
     except Exception:
         def _norm_nombre(x):

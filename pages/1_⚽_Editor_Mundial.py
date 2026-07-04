@@ -12,9 +12,9 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-import modelo_core as mc
-import ingesta as ing
-import nombres
+from mundial import modelo_core as mc
+from mundial import ingesta as ing
+from mundial import nombres
 
 st.set_page_config(page_title="Editor Mundial 2026", page_icon="⚽", layout="wide")
 
@@ -255,7 +255,7 @@ with col[1]:
                 st.error("Contraseña incorrecta.")
             else:
                 try:
-                    import gh_commit
+                    from mundial import gh_commit
                     res = gh_commit.commit_file(
                         gh["token"], gh["repo"],
                         gh.get("path", "results_actualizado_mundial_2026.csv"),

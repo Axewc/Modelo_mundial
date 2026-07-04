@@ -1,0 +1,28 @@
+[project]
+name = "mundial-2026"
+version = "1.0.0"
+description = "Modelo probabilístico del Mundial 2026: ELO + Dixon-Coles + ensemble calibrado, simulador Monte Carlo y app Streamlit, con backtests point-in-time."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Axel Casas" }]
+
+[tool.setuptools]
+packages = ["mundial"]
+
+[tool.ruff]
+line-length = 100
+extend-exclude = ["MODELO_1_2.ipynb"]
+
+[tool.ruff.lint]
+# Reglas que cazan bugs (sintaxis + pyflakes); el estilo no bloquea el CI.
+select = ["E9", "F"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# La raíz del repo en sys.path: el binario `pytest` (a diferencia de
+# `python -m pytest`) no añade el CWD, y sin esto el CI no encuentra ni el
+# paquete `mundial` ni los scripts de raíz (update_results).
+pythonpath = ["."]
+markers = [
+    "slow: tests pesados (entrenan el pipeline completo); se corren aparte",
+]

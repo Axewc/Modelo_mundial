@@ -39,7 +39,7 @@ NOMBRES_EXT = {
 
 def normaliza_equipo(n):
     try:
-        import nombres
+        from mundial import nombres
         return nombres.normaliza(n)
     except Exception:
         return NOMBRES_EXT.get(str(n).strip(), str(n).strip())

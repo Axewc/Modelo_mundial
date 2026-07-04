@@ -18,7 +18,7 @@ import numpy as np
 import pandas as pd
 
 try:
-    from ingesta import normaliza_equipo
+    from mundial.ingesta import normaliza_equipo
 except Exception:  # módulo aislado / tests
     def normaliza_equipo(n):
         return str(n).strip()

@@ -22,7 +22,8 @@ import functools
 import unicodedata
 from difflib import get_close_matches
 
-CSV_DEFAULT = "results_actualizado_mundial_2026.csv"
+from pathlib import Path as _Path
+CSV_DEFAULT = str(_Path(__file__).resolve().parents[1] / "results_actualizado_mundial_2026.csv")
 
 # Sinónimos reales (palabras distintas) que la normalización NO puede derivar.
 ALIAS = {
