@@ -1,5 +1,7 @@
 # Modelo predictivo — Mundial 2026
 
+![CI](https://github.com/Axewc/Modelo_mundial/actions/workflows/ci.yml/badge.svg)
+
 App de Streamlit que ejecuta el pipeline completo (ELO, Poisson, XGBoost,
 Dixon-Coles) y simula el torneo con el **cuadro oficial FIFA 2026**.
 
@@ -19,9 +21,9 @@ para pronósticos 1X2).
 
 | Modelo | Rusia 2018 | Qatar 2022 | 2026 (en curso)\* |
 |---|---|---|---|
-| **Ensemble (DC+ELO)** | **0.2201** | **0.2186** | 0.1830 |
-| ELO logístico | 0.2227 | 0.2191 | **0.1813** |
-| Dixon-Coles | 0.2274 | 0.2311 | 0.2029 |
+| Dixon-Coles | **0.2050** | 0.2140 | **0.1598** |
+| Ensemble (DC+ELO) | 0.2102 | **0.2119** | 0.1656 |
+| ELO logístico | 0.2227 | 0.2191 | 0.1813 |
 | Baseline frecuencias | 0.2506 | 0.2349 | 0.2191 |
 | Baseline uniforme (⅓,⅓,⅓) | 0.2439 | 0.2387 | 0.2346 |
 
@@ -39,15 +41,15 @@ significa definición por tanda.
 Diagrama de fiabilidad del modelo de goles con **7,328 predicciones
 point-in-time** (walk-forward 2019–hoy, reentrenando con ventana móvil de
 8 años y regularización elegida por validación en cada refit). Sobre esa
-muestra: RPS **0.197** vs 0.240 del baseline uniforme.
+muestra: RPS **0.168** vs 0.240 del baseline uniforme, accuracy 60.9%.
 
 ![Calibración del modelo](docs/img/calibracion.png)
 
-**Lectura:** los empates están bien calibrados; en victorias el modelo es
-**conservador** — cuando asigna >60% la frecuencia real es mayor (las
-probabilidades quedan comprimidas hacia el centro). Es consistente con el
-hallazgo del grid de regularización (abajo) y marca la dirección de la
-siguiente mejora.
+**Lectura:** las tres curvas siguen la diagonal en todo el rango 0.05–0.95:
+el modelo está **bien calibrado** — cuando dice 70%, ocurre ~70% de las
+veces. No siempre fue así: la primera versión de esta figura destapó
+probabilidades comprimidas, cuyo diagnóstico y arreglo están documentados
+abajo.
 
 ### Limitaciones y hallazgos (documentados a propósito)
 
@@ -57,29 +59,41 @@ siguiente mejora.
   Se conserva como fila comparativa en la app, no como modelo.
 - **Los empates casi no mueven el ELO** por el factor de margen
   `log(dif_goles+1)`: limitación conocida del diseño actual.
-- **El grid de regularización del DC se queda corto**: en validación,
-  `alpha` por debajo del mínimo del grid actual (0.01) sigue mejorando el
-  RPS — primer candidato de mejora del modelo.
+- **Hallazgo → mejora aplicada (grid de regularización):** el diagrama de
+  calibración destapó probabilidades comprimidas (modelo conservador). El
+  diagnóstico fue la regularización del DC: el grid de `alpha` se quedaba
+  corto en 0.01. Se validó un grid extendido en **5 cortes temporales
+  2021–2025** (α≈0.001 ganó unánime por deviance Y por RPS; RPS
+  out-of-sample ~0.175 vs ~0.20) y se aplicó. Los Mundiales del backtest
+  mejoraron: 2018 RPS 0.2274→0.2050, 2022 0.2311→0.2140, 2026 0.2029→0.1598
+  (Dixon-Coles).
 - **La comparación contra el mercado** (cuotas de cierre) está implementada
   en `backtest.py` (RPS modelo vs mercado, value betting con Kelly), a la
   espera de un histórico de cuotas para los Mundiales pasados.
 
-## Archivos
-- `app.py` — interfaz Streamlit (6 pestañas) + `pages/` (editor del Mundial).
-- `modelo_core.py` — todo el modelo (ingesta, ELO, Dixon-Coles, simulador).
-- `analisis_forma.py` — análisis de forma reciente / expectativa de goles.
-- `ingesta.py` — partidos del día, contraste modelo vs realidad, reentrenamiento.
-- `backtest_mundiales.py` — **backtest point-in-time de Mundiales** + calibración.
-- `backtest.py` — modelo vs mercado (RPS/CLV/value betting con Kelly).
-- `odds.py` — cuotas de casas (implícita sin margen, blend con el modelo).
-- `nombres.py` — normalización robusta de nombres de selección.
-- `gh_commit.py` — persistencia: commit del CSV a GitHub desde la app.
-- `scrape_fifa_ranking.py` — descarga el ranking FIFA a `fifa_ranking.csv`.
-- `update_results.py` — sincroniza el dataset con el upstream (martj42).
-- `requirements.txt` — dependencias.
-- `results_actualizado_mundial_2026.csv` — datos (jugados + fixtures por jugar).
-- `MODELO_1_2.ipynb` — notebook original (misma lógica).
-- `docs/` — resultados del backtest y figuras (regenerables por script).
+## Estructura
+```
+mundial/                  paquete del modelo
+  modelo_core.py            ingesta, ELO, Dixon-Coles, ensemble, simulador MC
+  analisis_forma.py         expectativa de goles por forma reciente
+  ingesta.py                partidos del día (ESPN), contraste, merge
+  odds.py                   cuotas: implícita sin margen, blend, The Odds API
+  backtest.py               modelo vs mercado (RPS/CLV/value betting Kelly)
+  nombres.py                normalización robusta de nombres de selección
+  gh_commit.py              persistencia: commit del CSV a GitHub desde la app
+app.py + pages/           app Streamlit (7 pestañas + editor del Mundial)
+backtest_mundiales.py     backtest point-in-time de Mundiales + calibración
+update_results.py         sincroniza el dataset con el upstream (martj42)
+scrape_fifa_ranking.py    descarga el ranking FIFA a fifa_ranking.csv
+tests/                    pytest (unitarios + smoke de la app)
+.github/workflows/ci.yml  CI: ruff + tests + smoke en cada PR
+docs/                     resultados del backtest y figuras (regenerables)
+results_actualizado_mundial_2026.csv   datos (jugados + fixtures)
+MODELO_1_2.ipynb          notebook original (misma lógica)
+```
+
+Correr los tests: `pytest -m "not slow" -q` (unitarios, segundos) ·
+`pytest -m slow -q` (smoke: renderiza la app completa entrenando el pipeline).
 
 ## Ejecutar en local
 ```bash
