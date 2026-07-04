@@ -35,8 +35,8 @@ import numpy as np
 import pandas as pd
 from sklearn.linear_model import LogisticRegression
 
-import modelo_core as mc
-from backtest import rps_set, logloss_set, brier_set
+from mundial import modelo_core as mc
+from mundial.backtest import rps_set, logloss_set, brier_set
 
 VENTANA_ANIOS = 8          # misma ventana que producción (2018 -> 2026)
 CLASES = ["V", "E", "L"]   # [away, draw, home] = 0,1,2

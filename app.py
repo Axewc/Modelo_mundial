@@ -6,11 +6,11 @@ Ejecuta:  streamlit run app.py
 import numpy as np
 import pandas as pd
 import streamlit as st
-import modelo_core as mc
-import analisis_forma as af
-import ingesta as ing
-import odds as odds_mod
-import backtest as bt
+from mundial import modelo_core as mc
+from mundial import analisis_forma as af
+from mundial import ingesta as ing
+from mundial import odds as odds_mod
+from mundial import backtest as bt
 
 st.set_page_config(page_title="Mundial 2026 — Modelo", layout="wide",
                    page_icon="⚽", initial_sidebar_state="expanded")
@@ -636,7 +636,7 @@ with tab6:
                 st.error("Contraseña incorrecta.")
             else:
                 try:
-                    import gh_commit
+                    from mundial import gh_commit
                     full = ing.merge_resultados(pd.read_csv(CSV),
                                                 ing.a_filas_dataset(apl))
                     branch = gh.get("branch", "main")

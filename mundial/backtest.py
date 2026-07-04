@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 try:
-    from ingesta import normaliza_equipo as _norm
+    from mundial.ingesta import normaliza_equipo as _norm
 except Exception:
     def _norm(n):
         return str(n).strip()
@@ -155,7 +155,7 @@ def _market_en_orientacion(o, home, away):
     """Devuelve (market_P[away,draw,home], odds[away,draw,home]) en la
     orientacion del partido del dataset (home/away), reordenando si la fila
     de cuotas viene al reves."""
-    from odds import implied_probs
+    from mundial.odds import implied_probs
     oh = float(o.get("cuota_home", o.get("home_odds", np.nan)))
     od = float(o.get("cuota_draw", o.get("draw_odds", np.nan)))
     oa = float(o.get("cuota_away", o.get("away_odds", np.nan)))
@@ -176,7 +176,7 @@ def construir_backtest(art, odds_df, retrain_every=15, min_train=200,
     (o home_odds/draw_odds/away_odds). Devuelve dict con arrays alineados:
     model_P, market_P, odds, outcomes y un DataFrame de detalle.
     """
-    import modelo_core as mc
+    from mundial import modelo_core as mc
 
     dfp = art["df"].reset_index(drop=True).copy()
     dfp["_H"] = dfp["home_team"].map(_norm)
