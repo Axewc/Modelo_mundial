@@ -19,6 +19,10 @@ select = ["E9", "F"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# La raíz del repo en sys.path: el binario `pytest` (a diferencia de
+# `python -m pytest`) no añade el CWD, y sin esto el CI no encuentra ni el
+# paquete `mundial` ni los scripts de raíz (update_results).
+pythonpath = ["."]
 markers = [
     "slow: tests pesados (entrenan el pipeline completo); se corren aparte",
 ]
